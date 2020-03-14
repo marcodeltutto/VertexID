@@ -1,0 +1,158 @@
+
+#  Here is a summary of what this file is doing.
+#
+#  Initial File Contents:
+#    - image2d_sbndwire_tree
+#    - particle_sbndseg_tree
+#    - cluster3d_sbndseg_tree
+#    - cluster2d_sbndseg_tree
+#    - cluster3d_sbndneutrino_tree
+#    - cluster2d_sbndneutrino_tree
+#    - particle_sbndneutrino_tree
+#
+#   Operations performed:
+#
+#   Modifications:
+#     - Cluster2D Threshold
+
+#   Filters:
+# 
+#
+#
+#   Cluster2DThreshold: set a threshold level for semantic segmentation labels for individual particles
+#
+#   ThresholdTensor3D: set a threshold for tensors in 3D
+#
+#   Tensor3DFromCluster3D: Convert cluster3d objects into tensor3d objects (input to the 3D networks) - all pixels are converted in 3D.
+#
+#   CompressAndEmbed: Convert 2D images into uniform sizes across planes.
+#
+#   QSumFilter: Filter out nearly empty events in 2D by setting a threshold on charge summed in each plane.  Filters 2D and 3D labels.
+#
+#   EmptyTensorFilter: Filter out nearly empty events in 3D by setting a threshold on the number of non-zero voxels
+#
+#   EventPIDLabel: Create whole-event labels for Madeline's classification
+#
+#   ParentParticleSeg: Merge clusters in 2D and 3D into just their parent particles
+#
+#   Tensor2DFromImage2D: Convert the image data (and label data) into tensors for point net style input
+#
+#   LeptonSegLabel: Label the pixels as primary lepton (1) or non-lepton (2) or background pixels (0) (creates image2d)
+#
+#   LeptonSegLabel3D: Label the pixels as primary lepton (1) or non-lepton (2) or background pixels (0) (creates voxel3d)
+#
+#  This file runs in randomizing order, so feed files in any pattern as the output will be randomized.
+#
+#
+#  What Gets Stored?
+#   The following data products are in the output file:
+#
+# "cluster2d" - "sbndneutrino"
+# "cluster2d" - "sbndsegmerged"
+# "sparse2d"  - "sbndwire"
+# "sparse2d"  - "sbndlepton"
+# "cluster3d" - "sbndneutrino"
+# "cluster3d" - "sbndsegmerged"
+# "sparse3d"  - "sbndvoxels"
+# "sparse3d"  - "sbndlepton"
+# "particle"  - "neutID"
+# "particle"  - "protID"
+# "particle"  - "cpiID"
+# "particle"  - "npiID"
+# "particle"  - "sbndneutrino"
+# "particle"  - "sbdnsegmerged"
+# "particle"  - "all"
+
+
+
+ProcessDriver: {
+  Verbosity:       0
+  EnableFilter:    true
+  RandomAccess:    false
+  RandomSeed:      0
+  ProcessType:     ["Threshold"]
+  ProcessList:     ["Cluster2DThreshold"]
+
+  #ProcessType:     ["Threshold","CompressAndEmbed","Tensor2DFromImage2D","QSumFilter","Tensor3DFromCluster3D","ThresholdTensor3D","EmptyTensorFilter","ParentParticleSeg","EventPIDLabel"]
+  #ProcessName:     ["Cluster2DThreshold","CompressAndEmbed","Tensor2DFromImage2D","QSumFilter","Tensor3DFromCluster3D","ThresholdTensor3D","EmptyTensorFilter","ParentParticleSeg","EventPIDLabel"]
+  #StartEntry: 0
+  #NumEntries: 10
+
+
+
+  IOManager: {
+    Verbosity:   2
+    Name:        "IOManager"
+    IOMode:      2
+    OutFileName: "out.h5"
+    InputFiles:  []
+    InputDirs:   []
+
+    # Everything in one file:
+    #StoreOnlyType: ["cluster2d","cluster2d","sparse2d","cluster3d","cluster3d","sparse3d","particle","particle","particle","particle","particle","particle","particle"]
+    #StoreOnlyName: ["sbndneutrino","sbndsegmerged","sbndwire","sbndneutrino","sbndsegmerged","sbndvoxels","neutID","protID","cpiID","npiID","sbndneutrino","sbdnsegmerged","all"]
+
+
+  }
+
+  ProcessList: {
+
+    # Image manipulations: 
+    Cluster2DThreshold: {
+      ProducerList:       ["sbndseg"]
+      ProductList:        ["cluster2d"]
+      OutputProducerList: ["sbndseg"]
+      Threshold:          [0.5]
+    }
+#    CompressAndEmbed: {
+#      Producer:          ["sbndwire","sbndneutrino","sbndseg"]
+#      DataType:          ["image2d","cluster2d","cluster2d"]
+#      RowCompression:    [1, 1, 1]
+#      ColCompression:    [1, 1, 1]
+#      Mode:              [0, 0, 0]
+#      OutputCols:        [2048, 2048, 2048]
+#      OutputRows:        [1280, 1280, 1280]
+#    }
+#    Tensor3DFromCluster3D: {
+#      Cluster3DProducer:   "sbndseg"
+#      OutputProducer:      "sbndvoxels"
+#    }
+#
+#    EmptyTensorFilter: {
+#      Tensor3DProducer: "sbndvoxels"
+#      MinVoxel3DCount: 50
+#    }
+#    ThresholdTensor3D: {
+#      Cluster2DProducer: ["sbndvoxels", "sbndlepton"]
+#      OutputProducer:    ["sbndvoxels", "sbndlepton"]
+#      Threshold:         0.5
+#    }
+#    ParentParticleSeg: {
+#      Cluster2dProducer:  "sbndseg"
+#      Cluster3dProducer:  "sbndseg"
+#      OutputProducer:     "sbndsegmerged"
+#      ParticleProducer:   "sbndseg"
+#    }
+#    EventPIDLabel: {
+#      OutputProducer:       "pid"
+#      ParticleProducer:     "sbndseg"
+#      NeutrinoProducer:     "sbndneutrino"
+#      ProtonThreshold:      0.020
+#      ChargedPionThreshold: 0.010
+#      NeutralPionThreshold: 0.000
+#    }
+#    QSumFilter: {
+#      ImageProducer: "sbndwire"
+#      MinQSum:       [100, 100, 100]
+#      MinPixel:      [20 , 20 , 20 ]
+#      MinADC:        [20 , 20 , 20 ]
+#    }
+#    Tensor2DFromImage2D: {
+#      ImageProducer: "sbndwire"
+#      OutputProducer: "sbndwire"
+#      ProjectionIDs: [0,1,2]
+#      Thresholds: [10.0,10.0,10.0]
+#    }
+  }
+}
+
