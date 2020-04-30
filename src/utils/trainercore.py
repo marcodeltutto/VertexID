@@ -7,6 +7,7 @@ from collections import OrderedDict
 import numpy
 
 import torch
+from torch.autograd import Variable
 
 from larcv import queueloader
 #from larcv import threadloader
@@ -33,7 +34,7 @@ class trainercore(object):
         if not self.args.training:
             self._larcv_interface = queueloader.queue_interface(random_access_mode="serial_access")
         else:
-            self._larcv_interface = queueloader.queue_interface(random_access_mode="random_blocks")
+            self._larcv_interface = queueloader.queue_interface(random_access_mode="serial_access")
 
         self._iteration       = 0
         self._global_step     = -1
@@ -178,8 +179,8 @@ class trainercore(object):
         # This sets up the necessary output shape:
         output_shape = dims[self.args.keyword_label]
         input_shape = dims['image']
-        print('OVERRIDING input_shape, remember to fix this once you have a proper file!')
-        input_shape = [1, 608, 608]
+        print('OVERRIDING input_shape, remember to fix this once you have a proper file!', input_shape)
+        input_shape = [input_shape[0], self.args.image_width, self.args.image_height]
 
 
         # To initialize the network, we see what the name is
@@ -438,17 +439,87 @@ class trainercore(object):
 
         return name, checkpoint_file_path
 
-    def _calculate_loss(self, inputs, logits):
-        ''' Calculate the loss.
 
-        returns a single scalar for the optimizer to use.
+    def target_to_yolo(self, target, n_channels=5, grid_size_w=56, grid_size_h=40):
+        '''
+        Takes the vertex data from larcv and transform it
+        to YOLO output.
+
+        arguments:
+        - target: the data from larcv
+        - n_channels: the number of channels used during training
+        - grid_size_w: the image width at the end of the network
+        - grid_size_h: the image height at the end of the network
+
+        returns:
+        - the transformed target
+        - a mask that can mask the entries where there are real objects
         '''
 
-        print ('Loss calulation to be implemented')
-        return 0
-        # values, target = torch.max(inputs[self.args.keyword_label], dim = 1)
-        # loss = self._criterion(logits, target=target)
-        # return loss
+        batch_size = target.size(0)
+
+        target_out = torch.zeros(batch_size, grid_size_w*grid_size_h, n_channels)
+        mask = torch.zeros(batch_size, grid_size_w*grid_size_h, dtype=torch.bool)
+
+        step_w = self.args.image_width / grid_size_w
+        step_h = self.args.image_height / grid_size_h
+
+
+        for batch_id in range(batch_size):
+            t_z = target[batch_id, 2] / step_w
+            t_i = int(t_z)
+            t_t = target[batch_id, 0] / step_h
+            t_j = int(t_t)
+
+            target_out[batch_id, grid_size_w * t_j + t_i, 0] = t_z - t_i
+            target_out[batch_id, grid_size_w * t_j + t_i, 1] = t_t - t_j
+            target_out[batch_id, grid_size_w * t_j + t_i, 2] = 1.
+            target_out[batch_id, grid_size_w * t_j + t_i, 3] = 1.
+
+            mask[batch_id, grid_size_w * t_j + t_i] = 1
+
+        return target_out, mask
+
+    def _calculate_loss(self, minibatch_data, prediction):
+        ''' 
+        Calculate the loss.
+
+        arguments:
+        - minibatch_data: the minibatch_data from larcv
+        - prediction: the prediction from the network
+
+        returns:
+        - a single scalar for the optimizer to use
+        '''
+
+        target, mask = self.target_to_yolo(minibatch_data['vertex'])
+
+        t_x = target[:,:,0]
+        t_y = target[:,:,1]
+        t_obj = target[:,:,2]
+        t_cls = target[:,:,3:]
+
+        p_x = prediction[:,:,0]
+        p_y = prediction[:,:,1]
+        p_obj = prediction[:,:,2]
+        p_cls = prediction[:,:,3:]
+
+        self.lambda_coord = 5
+        self.lambda_noobj = 0.5
+
+        mse_loss = torch.nn.MSELoss()
+        ce_loss = torch.nn.CrossEntropyLoss()
+
+        loss_x = mse_loss(p_x, t_x)
+        loss_y = mse_loss(p_y, t_y)
+
+        loss_obj = self.lambda_noobj * mse_loss(p_obj[~mask], t_obj[~mask]) + mse_loss(p_obj[mask], t_obj[mask])
+        loss_cls = (1 / self.args.minibatch_size) * ce_loss(p_cls[mask], torch.argmax(t_cls[mask], 1))
+
+        loss = loss_x + loss_y + loss_obj + loss_cls
+        loss = Variable(loss, requires_grad=True)
+
+        return loss
 
 
     def _calculate_accuracy(self, logits, minibatch_data):
@@ -459,7 +530,7 @@ class trainercore(object):
         # Compare how often the input label and the output prediction agree:
 
         print ('Accuracy calulation to be implemented')
-        return 0
+        return -99.
 
         # values, indices = torch.max(minibatch_data[self.args.keyword_label], dim = 1)
         # values, predict = torch.max(logits, dim=1)
@@ -474,13 +545,10 @@ class trainercore(object):
         # Call all of the functions in the metrics dictionary:
         metrics = {}
 
-        metrics['loss']     = loss.data
+        metrics['loss'] = loss.data
+
         accuracy = self._calculate_accuracy(logits, minibatch_data)
-        if self.args.label_mode == 'all':
-            metrics['accuracy'] = accuracy
-        elif self.args.label_mode == 'split':
-            for key in accuracy:
-                metrics['acc/{}'.format(key)] = accuracy[key]
+        metrics['accuracy'] = accuracy
 
         return metrics
 
@@ -662,24 +730,20 @@ class trainercore(object):
         minibatch_data = self.fetch_next_batch()
         io_end_time = datetime.datetime.now()
 
+        # numpy.save('tmp', minibatch_data['image'])
+
         minibatch_data = self.to_torch(minibatch_data)
-
-
-        print(self._net)
-        print('Exiting now, remove this once you have a proper file!')
-        exit()
-
-
 
         # Run a forward pass of the model on the input image:
         logits = self._net(minibatch_data['image'])
         print("Completed Forward pass")
+
         # Compute the loss based on the logits
         loss = self._calculate_loss(minibatch_data, logits)
 
         # Compute the gradients for the network parameters:
         loss.backward()
-        # print("Completed backward pass")
+        print("Completed backward pass")
 
         # Compute any necessary metrics:
         metrics = self._compute_metrics(logits, minibatch_data, loss)

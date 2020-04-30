@@ -26,7 +26,7 @@ class YOLOFlags(network_config):
             help    = "The anchors")
         this_parser.add_argument("--yolo-num-classes",
             type    = int,
-            default = 80,
+            default = 2,
             help    = "The number of classes")
 
 
@@ -198,11 +198,12 @@ class YOLOBlock(nn.Module):
     A YOLO block
     '''
 
-    def __init__(self, inp_dim, anchors, num_classes, cuda):
+    def __init__(self, inp_dim_w, inp_dim_h, anchors, num_classes, cuda):
 
         nn.Module.__init__(self)
 
-        self._inp_dim = inp_dim
+        self._inp_dim_w = inp_dim_w
+        self._inp_dim_h = inp_dim_h
         self._anchors = anchors
         self._num_classes = num_classes
         self._cuda = cuda
@@ -220,10 +221,12 @@ class YOLOBlock(nn.Module):
         # the bounding box attributes along the depth of the feature map.
 
         batch_size = prediction.size(0)
-        stride =  self._inp_dim // prediction.size(2)
-        grid_size = self._inp_dim // stride
-        bbox_attrs = 5 + self._num_classes # 5 contains height, lenght, pos_x, pos_y, obj_score
-        num_anchors = len(self._anchors)    
+        stride =  self._inp_dim_w // prediction.size(2)
+        grid_size_w = prediction.size(2) # self._inp_dim_w // stride
+        grid_size_h = prediction.size(3) # self._inp_dim_h // stride
+        bbox_attrs = 3 + self._num_classes # 5 contains pos_x, pos_y, obj_score
+        num_anchors = len(self._anchors)
+        # print('>>> prediction', prediction.shape)
         
         # Now, prediction is a tensor with dimensions
         # n x n x f, with f number of filters and n
@@ -232,22 +235,28 @@ class YOLOBlock(nn.Module):
         # The first step is to use 'view' to make this tensor
         # of dimension (n*n) x f, so that the image dimensions
         # are aligned in a single vector
-        prediction = prediction.view(batch_size, bbox_attrs*num_anchors, grid_size*grid_size)
+        # prediction = prediction.view(batch_size, bbox_attrs*num_anchors, grid_size_w*grid_size_h)
+        prediction = prediction.view(batch_size, bbox_attrs, grid_size_w*grid_size_h)
+        # print('>>> prediction', prediction.shape)
 
         # Then we spaw (transpose) this 2 dimensions
         # so to have a tensor f x (n*n)
         prediction = prediction.transpose(1,2).contiguous()
+        # print('>>> prediction', prediction.shape)
 
         # Now we are going to reshape this in a way that each row 
         # of this tensor corresponds to attributes of a bounding box
-        prediction = prediction.view(batch_size, grid_size*grid_size*num_anchors, bbox_attrs)
+        # prediction = prediction.view(batch_size, grid_size_w*grid_size_h*num_anchors, bbox_attrs)
+        prediction = prediction.view(batch_size, grid_size_w*grid_size_h, bbox_attrs)
+        # print('>>> prediction', prediction.shape)
 
         # The dimensions of the anchors is wrt to the height and width 
         # attributes of the net block. These attributes describe 
         # the dimensions of the input image, which is larger 
         # (by a factor of 'stride') than the detection map. 
         # We need to divide the anchors by the stride of the detection feature map.
-        anchors = [(a[0]/stride, a[1]/stride) for a in self._anchors]
+        # anchors = [(a[0]/stride, a[1]/stride) for a in self._anchors]
+        # print('>>> anchors', anchors)
 
         # Now, one row of the tensor contains:
         # - center_x
@@ -259,11 +268,12 @@ class YOLOBlock(nn.Module):
         # Need to apply sigmoid to center_x, center_y and obj_score 
         prediction[:,:,0] = torch.sigmoid(prediction[:,:,0])
         prediction[:,:,1] = torch.sigmoid(prediction[:,:,1])
-        prediction[:,:,4] = torch.sigmoid(prediction[:,:,4])
+        prediction[:,:,2] = torch.sigmoid(prediction[:,:,2])
         
         # Need to add the center offsets
-        grid = np.arange(grid_size)
-        a, b = np.meshgrid(grid, grid)
+        grid_x = np.arange(grid_size_w)
+        grid_y = np.arange(grid_size_h)
+        a, b = np.meshgrid(grid_x, grid_y)
         x_offset = torch.FloatTensor(a).view(-1,1)
         y_offset = torch.FloatTensor(b).view(-1,1)    
 
@@ -271,20 +281,8 @@ class YOLOBlock(nn.Module):
             x_offset = x_offset.cuda()
             y_offset = y_offset.cuda()    
 
-        x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1,num_anchors).view(-1,2).unsqueeze(0)    
-
+        x_y_offset = torch.cat((x_offset, y_offset), 1).view(-1,2).unsqueeze(0)    
         prediction[:,:,:2] += x_y_offset    
-
-        # heigth_x and heigth_y instead have an exp transformation
-        anchors = torch.FloatTensor(anchors)    
-
-        if self._cuda:
-            anchors = anchors.cuda()    
-
-        anchors = anchors.repeat(grid_size*grid_size, 1).unsqueeze(0)
-        prediction[:,:,2:4] = torch.exp(prediction[:,:,2:4])*anchors
-        prediction[:,:,5: 5 + self._num_classes] = torch.sigmoid((prediction[:,:, 5 : 5 + self._num_classes]))
-        prediction[:,:,:4] *= stride
         
         return prediction
 
@@ -311,7 +309,7 @@ def filter_increase(n_filters):
 
 
 
-class YOLO(torch.nn.Module):
+class YOLO(nn.Module):
 
     def __init__(self, input_shape, output_shape, args=None):
         torch.nn.Module.__init__(self)
@@ -325,10 +323,12 @@ class YOLO(torch.nn.Module):
         self.anchors = args.yolo_anchors
         self.num_classes = args.yolo_num_classes
 
+        self._x_yolo = None
+
         if args.compute_mode == "CPU": self._cuda = False
         else: self._cuda = True
 
-        prev_filters = 3
+        prev_filters = 1 #3
         n_filters = 32
 
         #
@@ -394,7 +394,8 @@ class YOLO(torch.nn.Module):
         batch_normalize = [True] * 7
         pad = [1] * 7
         stride = [1] * 7
-        filter_sizes = [512, 1024, 512, 1024, 512, 1024, 255]
+        # filter_sizes = [512, 1024, 512, 1024, 512, 1024, 255]
+        filter_sizes = [512, 1024, 512, 1024, 512, 1024, 5]
         kernel_size = [1, 3, 1, 3, 1, 3, 1]
         activation = ['leaky', 'leaky', 'leaky', 'leaky', 'leaky', 'leaky', 'linear']
 
@@ -402,22 +403,21 @@ class YOLO(torch.nn.Module):
 
         for i in range(0, len(filter_sizes)):
 
-            n_filters = filter_sizes[i]
-            
             self.convolution_blocks_1.append(Block(infilters=prev_filters, 
-                                                   outfilters=n_filters, 
+                                                   outfilters=filter_sizes[i], 
                                                    kernel=kernel_size[i], 
                                                    stride=stride[i], 
                                                    padding=pad[i], 
                                                    batch_norm=batch_normalize[i], 
                                                    activation=activation[i]))
 
-            prev_filters = n_filters
+            prev_filters = filter_sizes[i]
             
             self.add_module("convolution_block_1_{}".format(i), self.convolution_blocks_1[-1])
 
 
-        self.yololayer_1 = YOLOBlock(inp_dim=self.input_shape[1], 
+        self.yololayer_1 = YOLOBlock(inp_dim_w=self.input_shape[1],
+                                     inp_dim_h=self.input_shape[2],
                                      anchors=self.anchors, 
                                      num_classes=self.num_classes,
                                      cuda=self._cuda)
@@ -427,21 +427,32 @@ class YOLO(torch.nn.Module):
     def forward(self, x):
         
         batch_size = x.shape[0]
+        # print('batch_size', batch_size)
 
-        x = self.initial_convolution(x)
+        # Reshape this tensor into the right shape to apply this multiplane network.
+        self.nplanes = 3
+        x = torch.chunk(x, chunks=self.nplanes, dim=1)
+        # print('after chunk', batch_size)
+
+        x = [self.initial_convolution(_x) for _x in x]
+        # print('after initial_convolution', x[0].size())
 
         for i in range(0, self.n_core_blocks):
-            x = self.dowsample[i](x)
-            x = self.residual[i](x)
+            x = [self.dowsample[i](_x) for _x in x]
+            # print(i, 'after dowsample', x[0].size())
+            x = [self.residual[i](_x) for _x in x]
+            # print(i, 'after residual', x[0].size())
 
         for i in range(0, len(self.convolution_blocks_1)):
-            x = self.convolution_blocks_1[i](x)
+            x = [self.convolution_blocks_1[i](_x) for _x in x]
+            # print(i, 'after convolution_blocks_1', x[0].size())
 
-        # Yolo layer
-        x = self.yololayer_1(x)
+        self._x_yolo = [self.yololayer_1(_x) for _x in x]
 
+        # x = self._2d_to_3d(self._x_yolo)
 
-        return x
+        # Doing only plane 2, should be changed later
+        return self._x_yolo[2]
 
 
 

@@ -12,12 +12,15 @@ def train_io(input_file, image_dim, label_mode, prepend_names=""):
         max_voxels = 16000
         data_proc = gen_sparse3d_data_filler(name=prepend_names + "data", producer="\"dunevoxels\"", max_voxels=max_voxels)
 
+    vertex_proc = gen_vertex_filler(name=prepend_names, producer="\"neutrino\"")
+
     label_proc = gen_label_filler(label_mode, prepend_names)
 
 
     config = larcv_io.ThreadIOConfig(name="TrainIO")
 
     config.add_process(data_proc)
+    config.add_process(vertex_proc)
     for l in label_proc:
         config.add_process(l)
 
@@ -125,6 +128,16 @@ def gen_sparse3d_data_filler(name, producer, max_voxels):
     proc.set_param("MaxVoxels",         max_voxels)
     proc.set_param("UnfilledVoxelValue","-999")
     proc.set_param("Augment",           "true")
+
+    return proc
+
+def gen_vertex_filler(name, producer="\"neutrino\""):
+
+    proc = larcv_io.ProcessConfig(proc_name=name + "vertex", proc_type="BatchFillerVertex")
+
+    proc.set_param("Verbosity",         "1")
+    proc.set_param("ParticleProducer",  producer)
+    proc.set_param("PdgClassList",      "[{}]".format(",".join([str(i) for i in range(36)])))
 
     return proc
 

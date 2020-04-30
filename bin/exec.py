@@ -208,6 +208,14 @@ The most commonly used commands are:
             choices = ['dense', 'sparse', 'graph'],
             default = 'sparse',
             help    = "Input image format to the network, dense or sparse")
+        parser.add_argument('-iw','--image-width',
+            type    = str,
+            default = 1536,
+            help    = "Input image width")
+        parser.add_argument('-ih','--image-height',
+            type    = str,
+            default = 1024,
+            help    = "Input image height")
         parser.add_argument('-ld','--log-directory', 
             default ="log/",
             help    ="Prefix (directory) for logging information")
@@ -224,7 +232,7 @@ The most commonly used commands are:
             help    = "IO Input File")
         parser.add_argument('--input-dimension', 
             type    = int, 
-            default = 3,
+            default = 2,
             help    = "Dimensionality of data to use",
             choices = [2, 3] )
         parser.add_argument('--start-index', 
