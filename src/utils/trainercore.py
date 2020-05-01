@@ -494,13 +494,13 @@ class trainercore(object):
 
         target, mask = self.target_to_yolo(minibatch_data['vertex'])
 
-        t_x = target[:,:,0]
-        t_y = target[:,:,1]
+        t_x   = target[:,:,0]
+        t_y   = target[:,:,1]
         t_obj = target[:,:,2]
         t_cls = target[:,:,3:]
 
-        p_x = prediction[:,:,0]
-        p_y = prediction[:,:,1]
+        p_x   = prediction[:,:,0]
+        p_y   = prediction[:,:,1]
         p_obj = prediction[:,:,2]
         p_cls = prediction[:,:,3:]
 
@@ -517,7 +517,6 @@ class trainercore(object):
         loss_cls = (1 / self.args.minibatch_size) * ce_loss(p_cls[mask], torch.argmax(t_cls[mask], 1))
 
         loss = loss_x + loss_y + loss_obj + loss_cls
-        loss = Variable(loss, requires_grad=True)
 
         return loss
 
@@ -717,8 +716,9 @@ class trainercore(object):
 
         # For a train step, we fetch data, run a forward and backward pass, and
         # if this is a logging step, we compute some logging metrics.
-
+        torch.autograd.set_detect_anomaly(True)
         self._net.train()
+        # print(self._net)
 
         global_start_time = datetime.datetime.now()
 
@@ -736,14 +736,18 @@ class trainercore(object):
 
         # Run a forward pass of the model on the input image:
         logits = self._net(minibatch_data['image'])
-        print("Completed Forward pass")
+        print("Completed forward pass")
 
         # Compute the loss based on the logits
         loss = self._calculate_loss(minibatch_data, logits)
+        print('loss', loss.item())
 
         # Compute the gradients for the network parameters:
         loss.backward()
         print("Completed backward pass")
+
+        # print('weights', self._net.initial_convolution.conv1.weight)
+        # print('weights grad', self._net.initial_convolution.conv1.weight.grad)
 
         # Compute any necessary metrics:
         metrics = self._compute_metrics(logits, minibatch_data, loss)

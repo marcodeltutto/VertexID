@@ -63,7 +63,7 @@ class Block(nn.Module):
             self.bn1  = torch.nn.BatchNorm2d(outfilters)
 
         if activation == 'leaky':
-            self.activ = torch.nn.LeakyReLU(0.1, inplace = True)
+            self.activ = torch.nn.LeakyReLU()
         else:
             self.activ = torch.nn.ReLU()
 
@@ -124,7 +124,7 @@ class ResidualBlock(nn.Module):
             self.bn2  = torch.nn.BatchNorm2d(outfilters2)
 
         if activation == 'leaky':
-            self.activ = torch.nn.LeakyReLU(0.1, inplace = True)
+            self.activ = torch.nn.LeakyReLU()
         else:
             self.activ = torch.nn.ReLU()
 
@@ -261,8 +261,6 @@ class YOLOBlock(nn.Module):
         # Now, one row of the tensor contains:
         # - center_x
         # - center_y
-        # - heigth_x
-        # - heigth_y
         # - obj_score    
 
         # Need to apply sigmoid to center_x, center_y and obj_score 
@@ -271,24 +269,22 @@ class YOLOBlock(nn.Module):
         prediction[:,:,2] = torch.sigmoid(prediction[:,:,2])
         
         # Need to add the center offsets
-        grid_x = np.arange(grid_size_w)
-        grid_y = np.arange(grid_size_h)
-        a, b = np.meshgrid(grid_x, grid_y)
-        x_offset = torch.FloatTensor(a).view(-1,1)
-        y_offset = torch.FloatTensor(b).view(-1,1)    
+        # grid_x = np.arange(grid_size_w)
+        # grid_y = np.arange(grid_size_h)
+        # a, b = np.meshgrid(grid_x, grid_y)
+        # x_offset = torch.FloatTensor(a).view(-1,1)
+        # y_offset = torch.FloatTensor(b).view(-1,1)
 
-        if self._cuda:
-            x_offset = x_offset.cuda()
-            y_offset = y_offset.cuda()    
+        # if self._cuda:
+        #     x_offset = x_offset.cuda()
+        #     y_offset = y_offset.cuda()
 
-        x_y_offset = torch.cat((x_offset, y_offset), 1).view(-1,2).unsqueeze(0)    
-        prediction[:,:,:2] += x_y_offset    
-        
+        # x_y_offset = torch.cat((x_offset, y_offset), 1).view(-1,2).unsqueeze(0)    
+        # prediction[:,:,:2] += x_y_offset
+
         return prediction
 
     def forward(self, x, previous_detections=None):
-
-        x = x.data
 
         x = self.predict_transform(x)
 
@@ -427,32 +423,48 @@ class YOLO(nn.Module):
     def forward(self, x):
         
         batch_size = x.shape[0]
-        # print('batch_size', batch_size)
+        print('batch_size', batch_size)
 
         # Reshape this tensor into the right shape to apply this multiplane network.
         self.nplanes = 3
         x = torch.chunk(x, chunks=self.nplanes, dim=1)
-        # print('after chunk', batch_size)
+        print('after chunk', batch_size)
 
         x = [self.initial_convolution(_x) for _x in x]
-        # print('after initial_convolution', x[0].size())
+        print('after initial_convolution', x[0].size())
 
         for i in range(0, self.n_core_blocks):
             x = [self.dowsample[i](_x) for _x in x]
-            # print(i, 'after dowsample', x[0].size())
+            print(i, 'after dowsample', x[0].size())
             x = [self.residual[i](_x) for _x in x]
-            # print(i, 'after residual', x[0].size())
+            print(i, 'after residual', x[0].size())
 
         for i in range(0, len(self.convolution_blocks_1)):
             x = [self.convolution_blocks_1[i](_x) for _x in x]
-            # print(i, 'after convolution_blocks_1', x[0].size())
+            print(i, 'after convolution_blocks_1', x[0].size())
 
         self._x_yolo = [self.yololayer_1(_x) for _x in x]
+        # print('after yolo_1', self._x_yolo[0].size())
 
         # x = self._2d_to_3d(self._x_yolo)
 
         # Doing only plane 2, should be changed later
         return self._x_yolo[2]
+
+
+
+        # kernel_size = x.shape[2:]
+        # x = torch.squeeze(nn.AvgPool3d(kernel_size, ceil_mode=False)(x))
+        # print(i, 'after squeeze', x.size())
+
+        # x = [_x.view(batch_size, -1) for _x in x]
+        # print('after view', x[2].size())
+        # return x
+
+        # x = [_x.view(batch_size, -1) for _x in self._x_yolo]
+        # print('after view', len(x))
+        # print('after view', x[0].size())
+        # return x
 
 
 
