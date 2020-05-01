@@ -444,27 +444,12 @@ class YOLO(nn.Module):
             print(i, 'after convolution_blocks_1', x[0].size())
 
         self._x_yolo = [self.yololayer_1(_x) for _x in x]
-        # print('after yolo_1', self._x_yolo[0].size())
+        print('after yolo_1', self._x_yolo[0].size())
 
         # x = self._2d_to_3d(self._x_yolo)
 
         # Doing only plane 2, should be changed later
         return self._x_yolo[2]
-
-
-
-        # kernel_size = x.shape[2:]
-        # x = torch.squeeze(nn.AvgPool3d(kernel_size, ceil_mode=False)(x))
-        # print(i, 'after squeeze', x.size())
-
-        # x = [_x.view(batch_size, -1) for _x in x]
-        # print('after view', x[2].size())
-        # return x
-
-        # x = [_x.view(batch_size, -1) for _x in self._x_yolo]
-        # print('after view', len(x))
-        # print('after view', x[0].size())
-        # return x
 
 
 

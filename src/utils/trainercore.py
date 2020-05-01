@@ -455,6 +455,9 @@ class trainercore(object):
         - the transformed target
         - a mask that can mask the entries where there are real objects
         '''
+        pitch = 0.4
+        padding_x = 286
+        padding_y = 124
 
         batch_size = target.size(0)
 
@@ -464,15 +467,19 @@ class trainercore(object):
         step_w = self.args.image_width / grid_size_w
         step_h = self.args.image_height / grid_size_h
 
+        print('vertex x', target[0, 2], 'y', target[0, 0])
+        print('vertex x', (target[0, 2]/pitch + padding_x/2), 'y', (target[0, 0]/pitch + padding_y/2))
+        print('step_w', step_w, 'step_h', step_h)
+
 
         for batch_id in range(batch_size):
-            t_z = target[batch_id, 2] / step_w
-            t_i = int(t_z)
-            t_t = target[batch_id, 0] / step_h
-            t_j = int(t_t)
+            t_x = (target[batch_id, 2]/pitch + padding_x/2) / step_w
+            t_i = int(t_x)
+            t_y = (target[batch_id, 0]/pitch + padding_y/2) / step_h
+            t_j = int(t_y)
 
-            target_out[batch_id, grid_size_w * t_j + t_i, 0] = t_z - t_i
-            target_out[batch_id, grid_size_w * t_j + t_i, 1] = t_t - t_j
+            target_out[batch_id, grid_size_w * t_j + t_i, 0] = t_x - t_i
+            target_out[batch_id, grid_size_w * t_j + t_i, 1] = t_y - t_j
             target_out[batch_id, grid_size_w * t_j + t_i, 2] = 1.
             target_out[batch_id, grid_size_w * t_j + t_i, 3] = 1.
 
@@ -503,6 +510,11 @@ class trainercore(object):
         p_y   = prediction[:,:,1]
         p_obj = prediction[:,:,2]
         p_cls = prediction[:,:,3:]
+
+        i = 0
+        for t,p in zip(t_x[0], p_x[0]):
+            print(i, t, p)
+            i += 1
 
         self.lambda_coord = 5
         self.lambda_noobj = 0.5
