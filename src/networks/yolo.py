@@ -217,83 +217,87 @@ class YOLOBlock(nn.Module):
         ''' 
 
 
-        # The output of YOLO is a convolutional feature map that contains 
-        # the bounding box attributes along the depth of the feature map.
-
-        batch_size = prediction.size(0)
-        stride =  self._inp_dim_w // prediction.size(2)
-        grid_size_w = prediction.size(2) # self._inp_dim_w // stride
-        grid_size_h = prediction.size(3) # self._inp_dim_h // stride
-        bbox_attrs = 3 + self._num_classes # 5 contains pos_x, pos_y, obj_score
-        num_anchors = len(self._anchors)
-        # print('>>> prediction', prediction.shape)
-        
-        # Now, prediction is a tensor with dimensions
-        # n x n x f, with f number of filters and n
-        # is the dimension of the downsample image     
-
-        # The first step is to use 'view' to make this tensor
-        # of dimension (n*n) x f, so that the image dimensions
-        # are aligned in a single vector
-        # prediction = prediction.view(batch_size, bbox_attrs*num_anchors, grid_size_w*grid_size_h)
-        prediction = prediction.view(batch_size, bbox_attrs, grid_size_w*grid_size_h)
-        # print('>>> prediction', prediction.shape)
-
-        # Then we spaw (transpose) this 2 dimensions
-        # so to have a tensor f x (n*n)
-        prediction = prediction.transpose(1,2).contiguous()
-        # print('>>> prediction', prediction.shape)
-
-        # Now we are going to reshape this in a way that each row 
-        # of this tensor corresponds to attributes of a bounding box
-        # prediction = prediction.view(batch_size, grid_size_w*grid_size_h*num_anchors, bbox_attrs)
-        prediction = prediction.view(batch_size, grid_size_w*grid_size_h, bbox_attrs)
-        # print('>>> prediction', prediction.shape)
-
-        # The dimensions of the anchors is wrt to the height and width 
-        # attributes of the net block. These attributes describe 
-        # the dimensions of the input image, which is larger 
-        # (by a factor of 'stride') than the detection map. 
-        # We need to divide the anchors by the stride of the detection feature map.
-        # anchors = [(a[0]/stride, a[1]/stride) for a in self._anchors]
-        # print('>>> anchors', anchors)
-
-        # Now, one row of the tensor contains:
-        # - center_x
-        # - center_y
-        # - obj_score    
-
-        # Need to apply sigmoid to center_x, center_y and obj_score 
-        prediction[:,:,0] = torch.sigmoid(prediction[:,:,0])
-        prediction[:,:,1] = torch.sigmoid(prediction[:,:,1])
-        prediction[:,:,2] = torch.sigmoid(prediction[:,:,2])
-        
-        # Need to add the center offsets
-        # grid_x = np.arange(grid_size_w)
-        # grid_y = np.arange(grid_size_h)
-        # a, b = np.meshgrid(grid_x, grid_y)
-        # x_offset = torch.FloatTensor(a).view(-1,1)
-        # y_offset = torch.FloatTensor(b).view(-1,1)
-
-        # if self._cuda:
-        #     x_offset = x_offset.cuda()
-        #     y_offset = y_offset.cuda()
-
-        # x_y_offset = torch.cat((x_offset, y_offset), 1).view(-1,2).unsqueeze(0)    
-        # prediction[:,:,:2] += x_y_offset
+        prediction = prediction.permute(0,2,3,1)
+        prediction[:,:,:,0] = torch.sigmoid(prediction[:,:,:,0])
+        prediction[:,:,:,1] = torch.sigmoid(prediction[:,:,:,1])
+        prediction[:,:,:,2] = torch.sigmoid(prediction[:,:,:,2])
 
         return prediction
 
-    def forward(self, x, previous_detections=None):
+
+
+        # # The output of YOLO is a convolutional feature map that contains 
+        # # the bounding box attributes along the depth of the feature map.
+
+        # batch_size = prediction.size(0)
+        # stride =  self._inp_dim_w // prediction.size(2)
+        # grid_size_w = prediction.size(2) # self._inp_dim_w // stride
+        # grid_size_h = prediction.size(3) # self._inp_dim_h // stride
+        # bbox_attrs = 3 + self._num_classes # 5 contains pos_x, pos_y, obj_score
+        # num_anchors = len(self._anchors)
+        # # print('>>> prediction', prediction.shape)
+        
+        # # Now, prediction is a tensor with dimensions
+        # # n x n x f, with f number of filters and n
+        # # is the dimension of the downsample image     
+
+        # # The first step is to use 'view' to make this tensor
+        # # of dimension (n*n) x f, so that the image dimensions
+        # # are aligned in a single vector
+        # # prediction = prediction.view(batch_size, bbox_attrs*num_anchors, grid_size_w*grid_size_h)
+        # prediction = prediction.view(batch_size, bbox_attrs, grid_size_w*grid_size_h)
+        # # print('>>> prediction', prediction.shape)
+
+        # # Then we spaw (transpose) this 2 dimensions
+        # # so to have a tensor f x (n*n)
+        # prediction = prediction.transpose(1,2).contiguous()
+        # # print('>>> prediction', prediction.shape)
+
+        # # Now we are going to reshape this in a way that each row 
+        # # of this tensor corresponds to attributes of a bounding box
+        # # prediction = prediction.view(batch_size, grid_size_w*grid_size_h*num_anchors, bbox_attrs)
+        # prediction = prediction.view(batch_size, grid_size_w*grid_size_h, bbox_attrs)
+        # # print('>>> prediction', prediction.shape)
+
+        # # The dimensions of the anchors is wrt to the height and width 
+        # # attributes of the net block. These attributes describe 
+        # # the dimensions of the input image, which is larger 
+        # # (by a factor of 'stride') than the detection map. 
+        # # We need to divide the anchors by the stride of the detection feature map.
+        # # anchors = [(a[0]/stride, a[1]/stride) for a in self._anchors]
+        # # print('>>> anchors', anchors)
+
+        # # Now, one row of the tensor contains:
+        # # - center_x
+        # # - center_y
+        # # - obj_score    
+
+        # # Need to apply sigmoid to center_x, center_y and obj_score 
+        # prediction[:,:,0] = torch.sigmoid(prediction[:,:,0])
+        # prediction[:,:,1] = torch.sigmoid(prediction[:,:,1])
+        # prediction[:,:,2] = torch.sigmoid(prediction[:,:,2])
+        
+        # # Need to add the center offsets
+        # # grid_x = np.arange(grid_size_w)
+        # # grid_y = np.arange(grid_size_h)
+        # # a, b = np.meshgrid(grid_x, grid_y)
+        # # x_offset = torch.FloatTensor(a).view(-1,1)
+        # # y_offset = torch.FloatTensor(b).view(-1,1)
+
+        # # if self._cuda:
+        # #     x_offset = x_offset.cuda()
+        # #     y_offset = y_offset.cuda()
+
+        # # x_y_offset = torch.cat((x_offset, y_offset), 1).view(-1,2).unsqueeze(0)    
+        # # prediction[:,:,:2] += x_y_offset
+
+        # return prediction
+
+    def forward(self, x):
 
         x = self.predict_transform(x)
 
-        if previous_detections is not None:
-            detections = torch.cat((previous_detections, x), 1)
-        else:
-            detections = x
-
-        return detections
+        return x
 
 
 
@@ -387,13 +391,20 @@ class YOLO(nn.Module):
         # Parameters below correspond to the darknet configuration
         # Basically there are 7 convolutional blocks, with the 
         # following caracteristics:
-        batch_normalize = [True] * 7
-        pad = [1] * 7
-        stride = [1] * 7
-        # filter_sizes = [512, 1024, 512, 1024, 512, 1024, 255]
-        filter_sizes = [512, 1024, 512, 1024, 512, 1024, 5]
-        kernel_size = [1, 3, 1, 3, 1, 3, 1]
-        activation = ['leaky', 'leaky', 'leaky', 'leaky', 'leaky', 'leaky', 'linear']
+        # batch_normalize = [True] * 7
+        # pad = [1] * 7
+        # stride = [1] * 7
+        # filter_sizes = [512, 1024, 512, 1024, 512, 1024, 5]
+        # kernel_size = [1, 3, 1, 3, 1, 3, 1]
+        # activation = ['leaky', 'leaky', 'leaky', 'leaky', 'leaky', 'leaky', 'linear']
+
+        # Just one last bottleneck layer
+        batch_normalize = [True] * 1
+        pad = [1] * 1
+        stride = [1] * 1
+        filter_sizes = [5]
+        kernel_size = [3]
+        activation = ['leaky']
 
         self.convolution_blocks_1 = []
 
@@ -423,12 +434,10 @@ class YOLO(nn.Module):
     def forward(self, x):
         
         batch_size = x.shape[0]
-        print('batch_size', batch_size)
 
         # Reshape this tensor into the right shape to apply this multiplane network.
         self.nplanes = 3
         x = torch.chunk(x, chunks=self.nplanes, dim=1)
-        print('after chunk', batch_size)
 
         x = [self.initial_convolution(_x) for _x in x]
         print('after initial_convolution', x[0].size())
@@ -443,13 +452,13 @@ class YOLO(nn.Module):
             x = [self.convolution_blocks_1[i](_x) for _x in x]
             print(i, 'after convolution_blocks_1', x[0].size())
 
-        self._x_yolo = [self.yololayer_1(_x) for _x in x]
-        print('after yolo_1', self._x_yolo[0].size())
+        
+        x = [self.yololayer_1(_x) for _x in x]
+        print('after yolo_1', x[0].size())
 
-        # x = self._2d_to_3d(self._x_yolo)
 
         # Doing only plane 2, should be changed later
-        return self._x_yolo[2]
+        return x[2]
 
 
 

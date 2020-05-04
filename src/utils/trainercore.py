@@ -265,37 +265,49 @@ class trainercore(object):
 
         device = self.get_device()
 
+        # weights = torch.tensor([prediction.size(2)*prediction.size(3)-1., 1.], device=self.get_device())
+        # weights = torch.sum(weights) / weights
+
+        # bce_loss = torch.nn.BCELoss(weight=weights)
+        self._criterion_mse = torch.nn.MSELoss()
+        self._criterion_ce = torch.nn.CrossEntropyLoss()
+
+        n_empty = 48 * 32 - 1.
+        n_occupied = 1.
+        self._weight_empty = 1 / n_empty
+        self._weight_occupied = 1 - self._weight_empty
+
         # here we store the loss weights:
-        print('NEED TO CHANGE WEIGHTS AND LABELS!!!')
-        if self.args.label_mode == 'all':
-            self._label_weights = torch.tensor([
-                4930., 247., 2311., 225., 11833., 1592., 3887., 378., 4966., 1169., 1944., 335.,
-                5430., 201., 1630., 67., 13426., 1314., 3111., 243., 5070., 788., 1464., 163.,
-                5851.,3267.,1685.,183.,7211.,3283.,2744.,302.,5804.,1440.,1302., 204.
-                ], device=device)
-            weights = torch.sum(self._label_weights) / self._label_weights
-            self._label_weights = weights / torch.sum(weights)
+        # print('NEED TO CHANGE WEIGHTS AND LABELS!!!')
+        # if self.args.label_mode == 'all':
+        #     self._label_weights = torch.tensor([
+        #         4930., 247., 2311., 225., 11833., 1592., 3887., 378., 4966., 1169., 1944., 335.,
+        #         5430., 201., 1630., 67., 13426., 1314., 3111., 243., 5070., 788., 1464., 163.,
+        #         5851.,3267.,1685.,183.,7211.,3283.,2744.,302.,5804.,1440.,1302., 204.
+        #         ], device=device)
+        #     weights = torch.sum(self._label_weights) / self._label_weights
+        #     self._label_weights = weights / torch.sum(weights)
 
-            self._criterion = torch.nn.CrossEntropyLoss(weight=self._label_weights)
+        #     self._criterion = torch.nn.CrossEntropyLoss(weight=self._label_weights)
 
 
-        elif self.args.label_mode == 'split':
-            # These are the raw category occurences
-            self._label_weights = {
-                'label_cpi'  : torch.tensor([50932., 61269.], device=device),
-                'label_prot' : torch.tensor([36583., 46790., 28828.], device=device),
-                'label_npi'  : torch.tensor([70572., 41629.], device=device),
-                'label_neut' : torch.tensor([39452., 39094., 33655.], device=device)
-            }
+        # elif self.args.label_mode == 'split':
+        #     # These are the raw category occurences
+        #     self._label_weights = {
+        #         'label_cpi'  : torch.tensor([50932., 61269.], device=device),
+        #         'label_prot' : torch.tensor([36583., 46790., 28828.], device=device),
+        #         'label_npi'  : torch.tensor([70572., 41629.], device=device),
+        #         'label_neut' : torch.tensor([39452., 39094., 33655.], device=device)
+        #     }
 
-            self._criterion = {}
+        #     self._criterion = {}
 
-            for key in self._label_weights:
-                weights = torch.sum(self._label_weights[key]) / self._label_weights[key]
-                self._label_weights[key] = weights / torch.sum(weights)
+        #     for key in self._label_weights:
+        #         weights = torch.sum(self._label_weights[key]) / self._label_weights[key]
+        #         self._label_weights[key] = weights / torch.sum(weights)
 
-            for key in self._label_weights:
-                self._criterion[key] = torch.nn.CrossEntropyLoss(weight=self._label_weights[key])
+        #     for key in self._label_weights:
+        #         self._criterion[key] = torch.nn.CrossEntropyLoss(weight=self._label_weights[key])
 
 
     def init_saver(self):
@@ -438,9 +450,9 @@ class trainercore(object):
         checkpoint_file_path = file_path + "checkpoint"
 
         return name, checkpoint_file_path
+        
 
-
-    def target_to_yolo(self, target, n_channels=5, grid_size_w=56, grid_size_h=40):
+    def _target_to_yolo(self, target, n_channels=5, grid_size_w=56, grid_size_h=40):
         '''
         Takes the vertex data from larcv and transform it
         to YOLO output.
@@ -461,15 +473,15 @@ class trainercore(object):
 
         batch_size = target.size(0)
 
-        target_out = torch.zeros(batch_size, grid_size_w*grid_size_h, n_channels)
-        mask = torch.zeros(batch_size, grid_size_w*grid_size_h, dtype=torch.bool)
+        target_out = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels)
+        mask = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool)
 
         step_w = self.args.image_width / grid_size_w
         step_h = self.args.image_height / grid_size_h
 
-        print('vertex x', target[0, 2], 'y', target[0, 0])
-        print('vertex x', (target[0, 2]/pitch + padding_x/2), 'y', (target[0, 0]/pitch + padding_y/2))
-        print('step_w', step_w, 'step_h', step_h)
+        # print('vertex x', target[0, 2], 'y', target[0, 0])
+        # print('vertex x', (target[0, 2]/pitch + padding_x/2), 'y', (target[0, 0]/pitch + padding_y/2))
+        # print('step_w', step_w, 'step_h', step_h)
 
 
         for batch_id in range(batch_size):
@@ -478,12 +490,14 @@ class trainercore(object):
             t_y = (target[batch_id, 0]/pitch + padding_y/2) / step_h
             t_j = int(t_y)
 
-            target_out[batch_id, grid_size_w * t_j + t_i, 0] = t_x - t_i
-            target_out[batch_id, grid_size_w * t_j + t_i, 1] = t_y - t_j
-            target_out[batch_id, grid_size_w * t_j + t_i, 2] = 1.
-            target_out[batch_id, grid_size_w * t_j + t_i, 3] = 1.
+            target_out[batch_id, t_i, t_j, 0] = t_x - t_i
+            target_out[batch_id, t_i, t_j, 1] = t_y - t_j
+            target_out[batch_id, t_i, t_j, 2] = 1.
+            target_out[batch_id, t_i, t_j, 3] = 1.
 
-            mask[batch_id, grid_size_w * t_j + t_i] = 1
+            mask[batch_id, t_i, t_j] = 1
+
+            print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
 
         return target_out, mask
 
@@ -499,7 +513,18 @@ class trainercore(object):
         - a single scalar for the optimizer to use
         '''
 
-        target, mask = self.target_to_yolo(minibatch_data['vertex'])
+        target, mask = self._target_to_yolo(target=minibatch_data['vertex'],
+                                            n_channels=prediction.size(3),
+                                            grid_size_w=prediction.size(1),
+                                            grid_size_h=prediction.size(2))
+
+
+        original_shape = prediction.size()
+        bs = original_shape[0]
+
+        prediction = prediction.view(prediction.size(0), prediction.size(1)*prediction.size(2), prediction.size(3))
+        target     = target.view(target.size(0), target.size(1)*target.size(2), target.size(3))
+        mask       = mask.view(target.size(0), -1)
 
         t_x   = target[:,:,0]
         t_y   = target[:,:,1]
@@ -511,44 +536,66 @@ class trainercore(object):
         p_obj = prediction[:,:,2]
         p_cls = prediction[:,:,3:]
 
-        i = 0
-        for t,p in zip(t_x[0], p_x[0]):
-            print(i, t, p)
-            i += 1
+        # i = 0
+        # for t,p in zip(t_obj[0], p_obj[0]):
+        #     print(i, t, p)
+        #     i += 1
 
-        self.lambda_coord = 5
-        self.lambda_noobj = 0.5
-
-        mse_loss = torch.nn.MSELoss()
-        ce_loss = torch.nn.CrossEntropyLoss()
-
-        loss_x = mse_loss(p_x, t_x)
-        loss_y = mse_loss(p_y, t_y)
-
-        loss_obj = self.lambda_noobj * mse_loss(p_obj[~mask], t_obj[~mask]) + mse_loss(p_obj[mask], t_obj[mask])
-        loss_cls = (1 / self.args.minibatch_size) * ce_loss(p_cls[mask], torch.argmax(t_cls[mask], 1))
+        loss_obj = self._weight_empty * self._criterion_mse(p_obj[~mask], t_obj[~mask]) \
+                 + self._weight_occupied * self._criterion_mse(p_obj[mask], t_obj[mask])
+        loss_x = self._criterion_mse(p_x[mask], t_x[mask])
+        loss_y = self._criterion_mse(p_y[mask], t_y[mask])
+        loss_cls = self._criterion_ce(p_cls[mask], torch.argmax(t_cls[mask], axis=1))
 
         loss = loss_x + loss_y + loss_obj + loss_cls
 
         return loss
 
 
-    def _calculate_accuracy(self, logits, minibatch_data):
-        ''' Calculate the accuracy.
+    def _calculate_accuracy(self, minibatch_data, prediction, score_cut=0.5):
+        ''' 
+        Calculate the accuracy.
 
+        arguments:
+        - minibatch_data: the minibatch_data from larcv
+        - prediction: the prediction from the network
+        - score_cut: what cut value to apply to the object confidence output
+
+        returns:
+        - iou: intersection over union (union: all cells where we have a real object or where
+        we predict to be an object; intersection: cells where there is a real object, and we 
+        predict that there is an object
+        - r^2 averaged over cells with real objects
         '''
 
-        # Compare how often the input label and the output prediction agree:
+        target, _ = self._target_to_yolo(target=minibatch_data['vertex'],
+                                         n_channels=prediction.size(3),
+                                         grid_size_w=prediction.size(1),
+                                         grid_size_h=prediction.size(2))
 
-        print ('Accuracy calulation to be implemented')
-        return -99.
+        # Get the predcition and target for the object confidence
+        p_obj = prediction[:,:,:,2]
+        t_obj = target[:,:,:,2]
 
-        # values, indices = torch.max(minibatch_data[self.args.keyword_label], dim = 1)
-        # values, predict = torch.max(logits, dim=1)
-        # correct_prediction = torch.eq(predict,indices)
-        # accuracy = torch.mean(correct_prediction.float())
+        # Construct bool tensor that shows where we have or expect to have an object
+        mask_pred = p_obj > score_cut
+        mask_targ = t_obj > score_cut
 
-        # return accuracy
+        # Calculate iou
+        union = torch.sum(mask_targ | mask_pred)
+        intersection = torch.sum(p_obj[mask_targ] > score_cut)
+        iou = intersection.float() / union.float()
+
+        # Calculate r^2
+        x_pred = prediction[mask_targ][:,0]
+        y_pred = prediction[mask_targ][:,1]
+        x_targ = target[mask_targ][:,0]
+        y_targ = target[mask_targ][:,1]
+
+        with torch.no_grad():
+            r2 = self._criterion_mse(x_pred, x_targ) + self._criterion_mse(y_pred, y_targ)
+
+        return iou.item(), r2.item()
 
 
     def _compute_metrics(self, logits, minibatch_data, loss):
@@ -558,8 +605,10 @@ class trainercore(object):
 
         metrics['loss'] = loss.data
 
-        accuracy = self._calculate_accuracy(logits, minibatch_data)
-        metrics['accuracy'] = accuracy
+        iou, r2 = self._calculate_accuracy(minibatch_data, logits)
+        metrics['accuracy'] = iou
+        metrics['iou'] = iou
+        metrics['r2'] = r2
 
         return metrics
 
