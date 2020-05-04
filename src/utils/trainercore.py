@@ -34,7 +34,7 @@ class trainercore(object):
         if not self.args.training:
             self._larcv_interface = queueloader.queue_interface(random_access_mode="serial_access")
         else:
-            self._larcv_interface = queueloader.queue_interface(random_access_mode="serial_access")
+            self._larcv_interface = queueloader.queue_interface(random_access_mode="random_access")
 
         self._iteration       = 0
         self._global_step     = -1
@@ -450,7 +450,7 @@ class trainercore(object):
         checkpoint_file_path = file_path + "checkpoint"
 
         return name, checkpoint_file_path
-        
+
 
     def _target_to_yolo(self, target, n_channels=5, grid_size_w=56, grid_size_h=40):
         '''
