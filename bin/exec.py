@@ -201,7 +201,7 @@ The most commonly used commands are:
         parser.add_argument('-m','--compute-mode', 
             type    = str, 
             choices = ['CPU','GPU'], 
-            default = 'CPU',
+            default = 'GPU',
             help    = "Selection of compute device, CPU or GPU ")
         parser.add_argument('-im','--image-mode',
             type    = str,
