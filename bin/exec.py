@@ -206,7 +206,7 @@ The most commonly used commands are:
         parser.add_argument('-im','--image-mode',
             type    = str,
             choices = ['dense', 'sparse', 'graph'],
-            default = 'sparse',
+            default = 'dense',
             help    = "Input image format to the network, dense or sparse")
         parser.add_argument('-iw','--image-width',
             type    = str,
