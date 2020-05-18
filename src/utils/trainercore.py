@@ -459,9 +459,9 @@ class trainercore(object):
         - the transformed target
         - a mask that can mask the entries where there are real objects
         '''
-        pitch = 0.4
-        padding_x = 286
-        padding_y = 124
+        pitch = 0.4 * 2**self.args.downsample_images
+        padding_x = int(286 / 2**self.args.downsample_images)
+        padding_y = int(124 / 2**self.args.downsample_images)
 
         batch_size = target.size(0)
 
@@ -476,8 +476,8 @@ class trainercore(object):
         target_out = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels, device=device)
         mask = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool, device=device)
 
-        step_w = self.args.image_width / grid_size_w
-        step_h = self.args.image_height / grid_size_h
+        step_w = (self.args.image_width / 2**self.args.downsample_images) / grid_size_w
+        step_h = (self.args.image_height / 2**self.args.downsample_images) / grid_size_h
 
         # print('vertex x', target[0, 2], 'y', target[0, 0])
         # print('vertex x', (target[0, 2]/pitch + padding_x/2), 'y', (target[0, 0]/pitch + padding_y/2))
