@@ -419,20 +419,20 @@ class YOLO(nn.Module):
                                                    activation=activation[i]))
 
             prev_filters = filter_sizes[i]
-            
+
             self.add_module("convolution_block_1_{}".format(i), self.convolution_blocks_1[-1])
 
 
         self.yololayer_1 = YOLOBlock(inp_dim_w=self.input_shape[1],
                                      inp_dim_h=self.input_shape[2],
-                                     anchors=self.anchors, 
+                                     anchors=self.anchors,
                                      num_classes=self.num_classes,
                                      cuda=self._cuda)
         self.add_module("yololayer_1", self.yololayer_1)
 
 
     def forward(self, x):
-        
+
         batch_size = x.shape[0]
 
         # Reshape this tensor into the right shape to apply this multiplane network.
@@ -440,21 +440,21 @@ class YOLO(nn.Module):
         x = torch.chunk(x, chunks=self.nplanes, dim=1)
 
         x = [self.initial_convolution(_x) for _x in x]
-        print('after initial_convolution', x[0].size())
+        # print('after initial_convolution', x[0].size())
 
         for i in range(0, self.n_core_blocks):
             x = [self.dowsample[i](_x) for _x in x]
-            print(i, 'after dowsample', x[0].size())
+            # print(i, 'after dowsample', x[0].size())
             x = [self.residual[i](_x) for _x in x]
-            print(i, 'after residual', x[0].size())
+            # print(i, 'after residual', x[0].size())
 
         for i in range(0, len(self.convolution_blocks_1)):
             x = [self.convolution_blocks_1[i](_x) for _x in x]
-            print(i, 'after convolution_blocks_1', x[0].size())
+            # print(i, 'after convolution_blocks_1', x[0].size())
 
-        
+
         x = [self.yololayer_1(_x) for _x in x]
-        print('after yolo_1', x[0].size())
+        # print('after yolo_1', x[0].size())
 
 
         # Doing only plane 2, should be changed later

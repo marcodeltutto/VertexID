@@ -682,7 +682,6 @@ class trainercore(object):
 
         minibatch_data = self._larcv_interface.fetch_minibatch_data(mode, pop=True, fetch_meta_data=metadata)
         minibatch_dims = self._larcv_interface.fetch_minibatch_dims(mode)
-        print('minibatch_dims', minibatch_dims)
 
 
         for key in minibatch_data:

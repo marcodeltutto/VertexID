@@ -156,7 +156,7 @@ def gen_vertex_filler(name, producer="\"neutrino\""):
 
     proc = larcv_io.ProcessConfig(proc_name=name + "vertex", proc_type="BatchFillerVertex")
 
-    proc.set_param("Verbosity",         "1")
+    proc.set_param("Verbosity",         "2")
     proc.set_param("ParticleProducer",  producer)
     proc.set_param("PdgClassList",      "[{}]".format(",".join([str(i) for i in range(36)])))
 
