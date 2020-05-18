@@ -545,7 +545,7 @@ class trainercore(object):
                  + self._weight_occupied * self._criterion_mse(p_obj[mask], t_obj[mask])
         loss_x = self._criterion_mse(p_x[mask], t_x[mask])
         loss_y = self._criterion_mse(p_y[mask], t_y[mask])
-        loss_cls = self._criterion_ce(p_cls[mask], torch.argmax(t_cls[mask], axis=1))
+        loss_cls = self._criterion_ce(p_cls[mask], torch.argmax(t_cls[mask], dim=1))
 
         loss = loss_x + loss_y + loss_obj + loss_cls
 
