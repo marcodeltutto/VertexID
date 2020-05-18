@@ -4,7 +4,7 @@ from . import larcv_io
 
 # Here, we set up a bunch of template IO formats in the form of callable functions:
 
-def train_io(input_file, image_dim, label_mode, prepend_names=""):
+def train_io(input_file, image_dim, label_mode, prepend_names="", compression=0):
     if image_dim == 2:
         max_voxels = 20000
         data_proc = gen_sparse2d_data_filler(name=prepend_names + "data", producer="\"dunevoxels\"", max_voxels=max_voxels)
@@ -18,6 +18,13 @@ def train_io(input_file, image_dim, label_mode, prepend_names=""):
 
 
     config = larcv_io.ThreadIOConfig(name="TrainIO")
+
+    if compression != 0:
+        print('compression is', compression)
+        image_compression = gen_compression(
+            name="Downsample_image", input_label="\"dunevoxels\"",
+            compression_level = compression, pooling_type = "average")
+        config.add_process(image_compression)
 
     config.add_process(data_proc)
     config.add_process(vertex_proc)
@@ -128,6 +135,20 @@ def gen_sparse3d_data_filler(name, producer, max_voxels):
     proc.set_param("MaxVoxels",         max_voxels)
     proc.set_param("UnfilledVoxelValue","-999")
     proc.set_param("Augment",           "true")
+
+    return proc
+
+def gen_compression(name, input_label, compression_level, pooling_type):
+    proc = larcv_io.ProcessConfig(proc_name=name, proc_type="Downsample")
+
+    proc.set_param("Producer",       f"{input_label}")
+    proc.set_param("Product",         "\"sparse2d\"")
+    proc.set_param("OutputProducer", f"{input_label}")
+    proc.set_param("Downsample",       2**compression_level)
+    if pooling_type == "max":
+        proc.set_param("PoolType", 2)
+    elif pooling_type == "average":
+        proc.set_param("PoolType", 1)
 
     return proc
 

@@ -1,26 +1,17 @@
 import os
 import tempfile
-import sys
-import time
 from collections import OrderedDict
+import datetime
 
 import numpy
-
 import torch
-from torch.autograd import Variable
+import tensorboardX
 
 from larcv import queueloader
-#from larcv import threadloader
 
 from . import data_transforms
 from . import io_templates
 
-
-import datetime
-
-# This uses tensorboardX to save summaries and metrics to tensorboard compatible files.
-
-import tensorboardX
 
 class trainercore(object):
     '''
@@ -55,15 +46,16 @@ class trainercore(object):
         # Use the templates to generate a configuration string, which we store into a temporary file
         if self.args.training:
             config = io_templates.train_io(input_file=self.args.file, image_dim=self.args.input_dimension,
-                label_mode=self.args.label_mode)
+                label_mode=self.args.label_mode, compression=self.args.downsample_images)
         else:
             config = io_templates.ana_io(input_file=self.args.file, image_dim=self.args.input_dimension,
-                label_mode=self.args.label_mode)
+                label_mode=self.args.label_mode, compression=self.args.downsample_images)
 
 
         # Generate a named temp file:
         main_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
         main_file.write(config.generate_config_str())
+        print(config.generate_config_str())
 
         main_file.close()
         self._cleanup.append(main_file)
@@ -80,7 +72,7 @@ class trainercore(object):
         data_keys = OrderedDict()
         data_keys['image'] = 'data'
         for proc in config._process_list._processes:
-            if proc._name == 'data':
+            if proc._name == 'data' or 'Downsample' in proc._name:
                 continue
             else:
                 data_keys[proc._name] = proc._name
@@ -94,7 +86,7 @@ class trainercore(object):
                 if key != 'image':
                     self.args.keyword_label.append(key)
 
-
+        print(data_keys)
 
         if self.args.distributed:
             self._larcv_interface.prepare_manager(mode='primary',
@@ -682,6 +674,7 @@ class trainercore(object):
 
         minibatch_data = self._larcv_interface.fetch_minibatch_data(mode, pop=True, fetch_meta_data=metadata)
         minibatch_dims = self._larcv_interface.fetch_minibatch_dims(mode)
+        print('minibatch_dims', minibatch_dims)
 
 
         for key in minibatch_data:
@@ -704,7 +697,10 @@ class trainercore(object):
             if self.args.input_dimension == 3:
                 minibatch_data['image'] = data_transforms.larcvsparse_to_dense_3d(minibatch_data['image'])
             else:
-                minibatch_data['image'] = data_transforms.larcvsparse_to_dense_2d(minibatch_data['image'])
+                x_dim = int(1536/2**self.args.downsample_images)
+                y_dim = int(1024/2**self.args.downsample_images)
+                minibatch_data['image'] = data_transforms.larcvsparse_to_dense_2d(minibatch_data['image'],
+                                                                                  dense_shape=[x_dim, y_dim])
         elif self.args.image_mode == 'sparse':
             # Have to convert the input image from dense to sparse format:
             if self.args.input_dimension == 3:
@@ -791,7 +787,7 @@ class trainercore(object):
         minibatch_data = self.fetch_next_batch()
         io_end_time = datetime.datetime.now()
 
-        # numpy.save('tmp', minibatch_data['image'])
+        numpy.save('tmp', minibatch_data['image'])
 
         minibatch_data = self.to_torch(minibatch_data)
 

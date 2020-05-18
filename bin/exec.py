@@ -250,6 +250,11 @@ The most commonly used commands are:
             type    = int, 
             default = 2,
             help    = "Number of images in the minibatch size")
+
+        parser.add_argument('-ds', '--downsample-images',
+            default = 1,
+            type    = int,
+            help    = 'Dense downsampling of the images.  This is the number of downsamples applied (0 == none, 1 == once ...) ')
         
         # IO PARAMETERS FOR AUX INPUT:
         parser.add_argument('--aux-file', 
