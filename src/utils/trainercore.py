@@ -516,7 +516,7 @@ class trainercore(object):
 
         prediction = prediction.view(prediction.size(0), prediction.size(1)*prediction.size(2), prediction.size(3))
         target     = target.view(target.size(0), target.size(1)*target.size(2), target.size(3))
-        mask       = mask.view(target.size(0), -1)
+        mask       = mask.view(target.size(0), -1).byte()
 
         t_x   = target[:,:,0]
         t_y   = target[:,:,1]
