@@ -223,7 +223,7 @@ class trainercore(object):
             self._net.cuda()
 
         if self.args.label_mode == 'all':
-            self._log_keys = ['loss', 'accuracy']
+            self._log_keys = ['loss', 'iou', 'r2']
         elif self.args.label_mode == 'split':
             self._log_keys = ['loss']
             for key in self.args.keyword_label:
