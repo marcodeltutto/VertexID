@@ -497,7 +497,7 @@ class trainercore(object):
 
             mask[batch_id, t_i, t_j] = 1
 
-            print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
+            # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
 
         return target_out, mask
 
@@ -795,21 +795,21 @@ class trainercore(object):
         minibatch_data = self.fetch_next_batch()
         io_end_time = datetime.datetime.now()
 
-        numpy.save('tmp', minibatch_data['image'])
+        # numpy.save('tmp', minibatch_data['image'])
 
         minibatch_data = self.to_torch(minibatch_data)
 
         # Run a forward pass of the model on the input image:
         logits = self._net(minibatch_data['image'])
-        print("Completed forward pass")
+        # print("Completed forward pass")
 
         # Compute the loss based on the logits
         loss = self._calculate_loss(minibatch_data, logits)
-        print('loss', loss.item())
+        # print('loss', loss.item())
 
         # Compute the gradients for the network parameters:
         loss.backward()
-        print("Completed backward pass")
+        # print("Completed backward pass")
 
         # print('weights', self._net.initial_convolution.conv1.weight)
         # print('weights grad', self._net.initial_convolution.conv1.weight.grad)
