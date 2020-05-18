@@ -444,7 +444,7 @@ class trainercore(object):
         return name, checkpoint_file_path
 
 
-    def _target_to_yolo(self, target, n_channels=5, grid_size_w=56, grid_size_h=40):
+    def _target_to_yolo(self, target, n_channels=5, grid_size_w=56, grid_size_h=40, device=None):
         '''
         Takes the vertex data from larcv and transform it
         to YOLO output.
@@ -465,8 +465,16 @@ class trainercore(object):
 
         batch_size = target.size(0)
 
-        target_out = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels)
-        mask = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool)
+        # Convert the input data to torch tensors
+        if self.args.compute_mode == "GPU":
+            if device is None:
+                device = torch.device('cuda')
+        else:
+            if device is None:
+                device = torch.device('cpu')
+
+        target_out = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels, device=device)
+        mask = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool, device=device)
 
         step_w = self.args.image_width / grid_size_w
         step_h = self.args.image_height / grid_size_h
