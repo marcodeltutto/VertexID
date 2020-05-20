@@ -501,16 +501,18 @@ class trainercore(object):
 
         return target_out, mask
 
-    def _calculate_loss(self, minibatch_data, prediction):
-        ''' 
+    def _calculate_loss(self, minibatch_data, prediction, full=False):
+        '''
         Calculate the loss.
 
         arguments:
         - minibatch_data: the minibatch_data from larcv
         - prediction: the prediction from the network
+        - full: wheater to return all losses or only the total one
 
         returns:
-        - a single scalar for the optimizer to use
+        - a single scalar for the optimizer to use if full=False
+        - all losses if full=True
         '''
 
         target, mask = self._target_to_yolo(target=minibatch_data['vertex'],
@@ -548,6 +550,9 @@ class trainercore(object):
         loss_cls = self._criterion_ce(p_cls[mask], torch.argmax(t_cls[mask], dim=1))
 
         loss = loss_x + loss_y + loss_obj + loss_cls
+
+        if full:
+            return loss, loss_x, loss_y, loss_obj, loss_cls
 
         return loss
 
@@ -598,12 +603,28 @@ class trainercore(object):
         return iou.item(), r2.item()
 
 
-    def _compute_metrics(self, logits, minibatch_data, loss):
+    def _compute_metrics(self, logits, minibatch_data, loss, loss_x=0, loss_y=0, loss_obj=0, loss_cls=0):
+        '''
+        Computes all metrics and returns them as a dict
+
+        args:
+        - logits: prediction
+        - minibatch_data: target
+        - loss: loss
+        - loss_x: loss for x prediction only
+        - loss_y: loss for y prediction only
+        - loss_obj: loss for object confidence prediction only
+        - loss_cls: loss for class prediciotn only
+        '''
 
         # Call all of the functions in the metrics dictionary:
         metrics = {}
 
         metrics['loss'] = loss.data
+        metrics['loss_x'] = loss_x.data
+        metrics['loss_y'] = loss_y.data
+        metrics['loss_obj'] = loss_obj.data
+        metrics['loss_cls'] = loss_cls.data
 
         iou, r2 = self._calculate_accuracy(minibatch_data, logits)
         metrics['accuracy'] = iou
@@ -652,7 +673,7 @@ class trainercore(object):
 
 
 
-    def summary(self, metrics,saver=""):
+    def summary(self, metrics, saver=""):
 
         if self._saver is None:
             return
@@ -803,7 +824,9 @@ class trainercore(object):
         # print("Completed forward pass")
 
         # Compute the loss based on the logits
-        loss = self._calculate_loss(minibatch_data, logits)
+        loss, loss_x, loss_y, loss_obj, loss_cls = self._calculate_loss(minibatch_data,
+                                                                        logits,
+                                                                        full=True)
         # print('loss', loss.item())
 
         # Compute the gradients for the network parameters:
@@ -814,7 +837,7 @@ class trainercore(object):
         # print('weights grad', self._net.initial_convolution.conv1.weight.grad)
 
         # Compute any necessary metrics:
-        metrics = self._compute_metrics(logits, minibatch_data, loss)
+        metrics = self._compute_metrics(logits, minibatch_data, loss, loss_x, loss_y, loss_obj, loss_cls)
 
 
 
