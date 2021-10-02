@@ -12,8 +12,9 @@ from torch.autograd import Variable
 from larcv import queueloader
 #from larcv import threadloader
 
-from . import data_transforms
-from . import io_templates
+# from . import data_transforms
+# from . import io_templates
+from . import larcv_fetcher
 
 
 import datetime
@@ -31,15 +32,32 @@ class trainercore(object):
     '''
     def __init__(self, args):
         self.args = args
-        if not self.args.training:
-            self._larcv_interface = queueloader.queue_interface(random_access_mode="serial_access")
+        # if not self.args.training:
+        #     self._larcv_interface = queueloader.queue_interface(random_access_mode="serial_access")
+        # else:
+        #     self._larcv_interface = queueloader.queue_interface(random_access_mode="random_blocks")
+
+        if self.args.training:
+            self.mode = 'train'
         else:
-            self._larcv_interface = queueloader.queue_interface(random_access_mode="random_blocks")
+            self.mode = 'iotest'
+
+        access_mode = "serial_access" if self.mode == "training" else "random_blocks"
+
+        self.larcv_fetcher = larcv_fetcher.larcv_fetcher(
+            mode            = self.mode,
+            distributed     = self.args.distributed,
+            access_mode     = access_mode,
+            dimension       = self.args.input_dimension,
+            data_format     = self.args.image_mode
+        )
 
         self._iteration       = 0
         self._global_step     = -1
 
         self._cleanup         = []
+
+        print('-------------------------------- init')
 
     def __del__(self):
         for f in self._cleanup:
@@ -48,139 +66,178 @@ class trainercore(object):
 
     def _initialize_io(self, color=0):
 
+        def file_exists(filename, directory):
+            return pathlib.Path(directory + filename).exists()
+
+
+        configured_keys = []
+
+
+        # If mode is train, prepare the train file.
+        if self.mode == "train" or self.mode == "iotest":
+            if not os.path.exists(self.args.file):
+                raise Exception(f"File {self.args.file} not found")
+
+            # Prepare the training sample:
+            self._train_data_size = self.larcv_fetcher.prepare_sample(
+                name            = "primary",
+                input_file      = self.args.file,
+                batch_size      = self.args.minibatch_size,
+                color           = color
+            )
+
+            configured_keys += ["primary",]
+
+            # If the validation file exists, load that too:
+            if self.args.aux_file is not None:
+
+                self._val_data_size = self.larcv_fetcher.prepare_sample(
+                    name            = "val",
+                    input_file      = self.args.aux_file,
+                    batch_size      = self.args.aux_minibatch_size,
+                    color           = color
+                )
+                configured_keys += ["val",]
+
+        elif self.mode == "inference":
+            pass
+
+        print('-------------------------------- init io')
+        return configured_keys
+
         # First, verify the files exist:
-        if not os.path.exists(self.args.file):
-            raise Exception(f"File {self.args.file} not found")
+        # if not os.path.exists(self.args.file):
+        #     raise Exception(f"File {self.args.file} not found")
+
 
         # Use the templates to generate a configuration string, which we store into a temporary file
-        if self.args.training:
-            config = io_templates.train_io(input_file=self.args.file, image_dim=self.args.input_dimension,
-                label_mode=self.args.label_mode)
-        else:
-            config = io_templates.ana_io(input_file=self.args.file, image_dim=self.args.input_dimension,
-                label_mode=self.args.label_mode)
+        # if self.args.training:
+        #     config = io_templates.train_io(input_file=self.args.file, image_dim=self.args.input_dimension,
+        #         label_mode=self.args.label_mode)
+        # else:
+        #     config = io_templates.ana_io(input_file=self.args.file, image_dim=self.args.input_dimension,
+        #         label_mode=self.args.label_mode)
 
 
         # Generate a named temp file:
-        main_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
-        main_file.write(config.generate_config_str())
+        # main_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
+        # main_file.write(config.generate_config_str())
 
-        main_file.close()
-        self._cleanup.append(main_file)
+        # main_file.close()
+        # self._cleanup.append(main_file)
 
-        # Prepare data managers:
-        io_config = {
-            'filler_name' : config._name,
-            'filler_cfg'  : main_file.name,
-            'verbosity'   : 5,
-            'make_copy'   : True
-        }
+        # # Prepare data managers:
+        # io_config = {
+        #     'filler_name' : config._name,
+        #     'filler_cfg'  : main_file.name,
+        #     'verbosity'   : 5,
+        #     'make_copy'   : True
+        # }
 
-        # Build up the data_keys:
-        data_keys = OrderedDict()
-        data_keys['image'] = 'data'
-        for proc in config._process_list._processes:
-            if proc._name == 'data':
-                continue
-            else:
-                data_keys[proc._name] = proc._name
+        # # Build up the data_keys:
+        # data_keys = OrderedDict()
+        # data_keys['image'] = 'data'
+        # for proc in config._process_list._processes:
+        #     if proc._name == 'data':
+        #         continue
+        #     else:
+        #         data_keys[proc._name] = proc._name
 
-        # Assign the keywords here:
-        if self.args.label_mode == 'all':
-            self.args.keyword_label = 'label'
-        else:
-            self.args.keyword_label = []
-            for key in data_keys.keys():
-                if key != 'image':
-                    self.args.keyword_label.append(key)
-
-
-
-        if self.args.distributed:
-            self._larcv_interface.prepare_manager(mode='primary',
-                                                  io_config=io_config,
-                                                  minibatch_size=self.args.minibatch_size,
-                                                  data_keys=data_keys,
-                                                  # files=self.args.file,
-                                                  random_access_mode="random_blocks",
-                                                  read_option="read_from_all_ranks_mpi")
-        else:
-            self._larcv_interface.prepare_manager(mode      = 'primary',
-                                                  io_config = io_config,
-                                                  minibatch_size = self.args.minibatch_size,
-                                                  data_keys = data_keys )
+        # # Assign the keywords here:
+        # if self.args.label_mode == 'all':
+        #     self.args.keyword_label = 'label'
+        # else:
+        #     self.args.keyword_label = []
+        #     for key in data_keys.keys():
+        #         if key != 'image':
+        #             self.args.keyword_label.append(key)
 
 
-        if not self.args.training:
-            self._larcv_interface.set_next_index('primary', self.args.start_index)
+
+        # if self.args.distributed:
+        #     self._larcv_interface.prepare_manager(mode='primary',
+        #                                           io_config=io_config,
+        #                                           minibatch_size=self.args.minibatch_size,
+        #                                           data_keys=data_keys,
+        #                                           # files=self.args.file,
+        #                                           random_access_mode="random_blocks",
+        #                                           read_option="read_from_all_ranks_mpi")
+        # else:
+        #     self._larcv_interface.prepare_manager(mode      = 'primary',
+        #                                           io_config = io_config,
+        #                                           minibatch_size = self.args.minibatch_size,
+        #                                           data_keys = data_keys )
+
+
+        # if not self.args.training:
+        #     self._larcv_interface.set_next_index('primary', self.args.start_index)
 
         # All of the additional tools are in case there is a test set up:
-        if self.args.aux_file is not None:
+        # if self.args.aux_file is not None:
 
 
-            if self.args.training:
-                config = io_templates.test_io(input_file=self.args.aux_file, image_dim=self.args.input_dimension,
-                    label_mode=self.args.label_mode)
+        #     if self.args.training:
+        #         config = io_templates.test_io(input_file=self.args.aux_file, image_dim=self.args.input_dimension,
+        #             label_mode=self.args.label_mode)
 
-                # Generate a named temp file:
-                aux_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
-                aux_file.write(config.generate_config_str())
-                # print([proc._name for proc in config._process_list._processes])
+        #         # Generate a named temp file:
+        #         aux_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
+        #         aux_file.write(config.generate_config_str())
+        #         # print([proc._name for proc in config._process_list._processes])
 
-                aux_file.close()
-                self._cleanup.append(aux_file)
-                io_config = {
-                    'filler_name' : config._name,
-                    'filler_cfg'  : aux_file.name,
-                    'verbosity'   : 5,
-                    'make_copy'   : True
-                }
+        #         aux_file.close()
+        #         self._cleanup.append(aux_file)
+        #         io_config = {
+        #             'filler_name' : config._name,
+        #             'filler_cfg'  : aux_file.name,
+        #             'verbosity'   : 5,
+        #             'make_copy'   : True
+        #         }
 
-                # Build up the data_keys:
-                data_keys = OrderedDict()
-                data_keys['image'] = 'aux_data'
-                for proc in config._process_list._processes:
-                    if proc._name == 'aux_data':
-                        continue
-                    else:
-                        data_keys[proc._name] = proc._name
+        #         # Build up the data_keys:
+        #         data_keys = OrderedDict()
+        #         data_keys['image'] = 'aux_data'
+        #         for proc in config._process_list._processes:
+        #             if proc._name == 'aux_data':
+        #                 continue
+        #             else:
+        #                 data_keys[proc._name] = proc._name
 
 
-                if self.args.distributed:
-                    self._larcv_interface.prepare_manager(mode='aux',
-                                                          io_config=io_config,
-                                                          minibatch_size=self.args.aux_minibatch_size,
-                                                          data_keys=data_keys,
-                                                          # files=self.args.aux_file,
-                                                          random_access_mode="serial_access",
-                                                          read_option="read_from_all_ranks_mpi")
-                else:
-                    self._larcv_interface.prepare_manager('aux', io_config, self.args.aux_minibatch_size, data_keys, files=self.args.aux_file)
+        #         if self.args.distributed:
+        #             self._larcv_interface.prepare_manager(mode='aux',
+        #                                                   io_config=io_config,
+        #                                                   minibatch_size=self.args.aux_minibatch_size,
+        #                                                   data_keys=data_keys,
+        #                                                   # files=self.args.aux_file,
+        #                                                   random_access_mode="serial_access",
+        #                                                   read_option="read_from_all_ranks_mpi")
+        #         else:
+        #             self._larcv_interface.prepare_manager('aux', io_config, self.args.aux_minibatch_size, data_keys, files=self.args.aux_file)
 
-        if 'output_file' in self.args and self.args.output_file is not None:
-            if not self.args.training:
-                config = io_templates.output_io(input_file=self.args.file, output_file=self.args.output_file)
+        # if 'output_file' in self.args and self.args.output_file is not None:
+        #     if not self.args.training:
+        #         config = io_templates.output_io(input_file=self.args.file, output_file=self.args.output_file)
 
-                out_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
-                out_file.write(config.generate_config_str())
-                print(config.generate_config_str())
+        #         out_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
+        #         out_file.write(config.generate_config_str())
+        #         print(config.generate_config_str())
 
-                out_file.close()
-                self._cleanup.append(out_file)
+        #         out_file.close()
+        #         self._cleanup.append(out_file)
 
-                self._larcv_interface.prepare_writer(io_config=out_file.name, input_files=self.args.file, output_file=self.args.output_file)
+        #         self._larcv_interface.prepare_writer(io_config=out_file.name, input_files=self.args.file, output_file=self.args.output_file)
 
 
 
     def init_network(self):
 
-        dims = self._larcv_interface.fetch_minibatch_dims('primary')
-
         # This sets up the necessary output shape:
-        output_shape = dims[self.args.keyword_label]
-        input_shape = dims['image']
-        print('OVERRIDING input_shape, remember to fix this once you have a proper file!', input_shape)
-        input_shape = [input_shape[0], self.args.image_width, self.args.image_height]
+        output_shape = self.larcv_fetcher.output_shape('primary')
+        input_shape = self.larcv_fetcher.input_shape('primary')
+
+        print('Input shape:', input_shape)
+        print('Output shape:', output_shape)
 
 
         # To initialize the network, we see what the name is
@@ -188,12 +245,69 @@ class trainercore(object):
         if self.args.network == "yolo":
             from src.networks import yolo
             self._net = yolo.YOLO(input_shape, output_shape, self.args)
+        elif self.args.network.name == "resnet":
+            if self.args.network.data_format == 'sparse':
+                if self.args.dataset.dimension == 2:
+                    from src.networks.torch import sparseresnet
+                    self._net = sparseresnet.ResNet(output_shape, self.args)
+                else:
+                    from src.networks.torch import sparseresnet3d
+                    self._net = sparseresnet3d.ResNet(output_shape, self.args)
+            else:
+                if self.args.dataset.dimension == 2:
+                    from src.networks.torch import resnet
+                    self._net = resnet.ResNet(output_shape, self.args)
+                else:
+                    raise Exception("No Resnet3d Implemented!")
+        elif self.args.network.name == "pointnet":
+            if self.args.dataset.dimension == 2:
+                from src.networks.torch import pointnet
+                self._net = pointnet.PointNet(output_shape, self.args)
+            else:
+                from src.networks.torch import pointnet3d
+                self._net = pointnet3d.PointNet(output_shape, self.args)
+        elif self.args.network.name == "dgcnn":
+            if self.args.dataset.dimension == 2:
+                from src.networks.torch import dgcnn2d
+                self._net = dgcnn2d.DGCNN(output_shape, self.args)
+            else:
+                from src.networks.torch import dgcnn3d
+                self._net = dgcnn3d.DGCNN(output_shape, self.args)
         else:
-            raise Exception(f"Couldn't identify network {self.args.network}")
+            raise Exception(f"Couldn't identify network {self.args.network.name}")
 
 
-        if self.args.training:
+
+        if self.mode == "train":
             self._net.train(True)
+
+        if self.args.compute_mode == "CPU":
+            pass
+        if self.args.compute_mode == "GPU":
+            self._net.cuda()
+
+
+
+        # dims = self._larcv_interface.fetch_minibatch_dims('primary')
+
+        # # This sets up the necessary output shape:
+        # output_shape = dims[self.args.keyword_label]
+        # input_shape = dims['image']
+        # print('OVERRIDING input_shape, remember to fix this once you have a proper file!', input_shape)
+        # input_shape = [input_shape[0], self.args.image_width, self.args.image_height]
+
+
+        # # To initialize the network, we see what the name is
+        # # and act on that:
+        # if self.args.network == "yolo":
+        #     from src.networks import yolo
+        #     self._net = yolo.YOLO(input_shape, output_shape, self.args)
+        # else:
+        #     raise Exception(f"Couldn't identify network {self.args.network}")
+
+
+        # if self.args.training:
+        #     self._net.train(True)
 
 
     def initialize(self, io_only=False):
@@ -237,6 +351,7 @@ class trainercore(object):
             for key in self.args.keyword_label:
                 self._log_keys.append('acc/{}'.format(key))
 
+        print('-------------------------------- initialize')
 
     def get_device(self):
         # Convert the input data to torch tensors
@@ -502,7 +617,7 @@ class trainercore(object):
         return target_out, mask
 
     def _calculate_loss(self, minibatch_data, prediction):
-        ''' 
+        '''
         Calculate the loss.
 
         arguments:
@@ -553,7 +668,7 @@ class trainercore(object):
 
 
     def _calculate_accuracy(self, minibatch_data, prediction, score_cut=0.5):
-        ''' 
+        '''
         Calculate the accuracy.
 
         arguments:
@@ -675,49 +790,49 @@ class trainercore(object):
             pass
 
 
-    def fetch_next_batch(self, mode='primary', metadata=False):
+    # def fetch_next_batch(self, mode='primary', metadata=False):
 
-        # For the serial mode, call next here:
-        self._larcv_interface.prepare_next(mode)
+    #     # For the serial mode, call next here:
+    #     self._larcv_interface.prepare_next(mode)
 
-        minibatch_data = self._larcv_interface.fetch_minibatch_data(mode, pop=True, fetch_meta_data=metadata)
-        minibatch_dims = self._larcv_interface.fetch_minibatch_dims(mode)
-
-
-        for key in minibatch_data:
-            if key == 'entries' or key == 'event_ids':
-                continue
-            minibatch_data[key] = numpy.reshape(minibatch_data[key], minibatch_dims[key])
-
-        # Strip off the primary/aux label in the keys:
-        if mode != 'primary':
-            # Can't do this in a loop due to limitations of python's dictionaries.
-            minibatch_data["label_cpi"]  = minibatch_data.pop("aux_label_cpi")
-            minibatch_data["label_npi"]  = minibatch_data.pop("aux_label_npi")
-            minibatch_data["label_prot"] = minibatch_data.pop("aux_label_prot")
-            minibatch_data["label_neut"] = minibatch_data.pop("aux_label_neut")
+    #     minibatch_data = self._larcv_interface.fetch_minibatch_data(mode, pop=True, fetch_meta_data=metadata)
+    #     minibatch_dims = self._larcv_interface.fetch_minibatch_dims(mode)
 
 
-        # Here, do some massaging to convert the input data to another format, if necessary:
-        if self.args.image_mode == 'dense':
-            # Need to convert sparse larcv into a dense numpy array:
-            if self.args.input_dimension == 3:
-                minibatch_data['image'] = data_transforms.larcvsparse_to_dense_3d(minibatch_data['image'])
-            else:
-                minibatch_data['image'] = data_transforms.larcvsparse_to_dense_2d(minibatch_data['image'])
-        elif self.args.image_mode == 'sparse':
-            # Have to convert the input image from dense to sparse format:
-            if self.args.input_dimension == 3:
-                minibatch_data['image'] = data_transforms.larcvsparse_to_scnsparse_3d(minibatch_data['image'])
-            else:
-                minibatch_data['image'] = data_transforms.larcvsparse_to_scnsparse_2d(minibatch_data['image'])
-        elif self.args.image_mode == 'graph':
-            minibatch_data['image'] = data_transforms.larcvsparse_to_torchgeometric(minibatch_data['image'])
-            pass
-        else:
-            raise Exception("Image Mode not recognized")
+    #     for key in minibatch_data:
+    #         if key == 'entries' or key == 'event_ids':
+    #             continue
+    #         minibatch_data[key] = numpy.reshape(minibatch_data[key], minibatch_dims[key])
 
-        return minibatch_data
+    #     # Strip off the primary/aux label in the keys:
+    #     if mode != 'primary':
+    #         # Can't do this in a loop due to limitations of python's dictionaries.
+    #         minibatch_data["label_cpi"]  = minibatch_data.pop("aux_label_cpi")
+    #         minibatch_data["label_npi"]  = minibatch_data.pop("aux_label_npi")
+    #         minibatch_data["label_prot"] = minibatch_data.pop("aux_label_prot")
+    #         minibatch_data["label_neut"] = minibatch_data.pop("aux_label_neut")
+
+
+    #     # Here, do some massaging to convert the input data to another format, if necessary:
+    #     if self.args.image_mode == 'dense':
+    #         # Need to convert sparse larcv into a dense numpy array:
+    #         if self.args.input_dimension == 3:
+    #             minibatch_data['image'] = data_transforms.larcvsparse_to_dense_3d(minibatch_data['image'])
+    #         else:
+    #             minibatch_data['image'] = data_transforms.larcvsparse_to_dense_2d(minibatch_data['image'])
+    #     elif self.args.image_mode == 'sparse':
+    #         # Have to convert the input image from dense to sparse format:
+    #         if self.args.input_dimension == 3:
+    #             minibatch_data['image'] = data_transforms.larcvsparse_to_scnsparse_3d(minibatch_data['image'])
+    #         else:
+    #             minibatch_data['image'] = data_transforms.larcvsparse_to_scnsparse_2d(minibatch_data['image'])
+    #     elif self.args.image_mode == 'graph':
+    #         minibatch_data['image'] = data_transforms.larcvsparse_to_torchgeometric(minibatch_data['image'])
+    #         pass
+    #     else:
+    #         raise Exception("Image Mode not recognized")
+
+    #     return minibatch_data
 
     def increment_global_step(self):
 
@@ -788,7 +903,7 @@ class trainercore(object):
 
         # Fetch the next batch of data with larcv
         io_start_time = datetime.datetime.now()
-        minibatch_data = self.fetch_next_batch()
+        minibatch_data = self.larcv_fetcher.fetch_next_batch("primary", force_pop = True)
         io_end_time = datetime.datetime.now()
 
         # numpy.save('tmp', minibatch_data['image'])
@@ -876,7 +991,7 @@ class trainercore(object):
 
                 # Fetch the next batch of data with larcv
                 # (Make sure to pull from the validation set)
-                minibatch_data = self.fetch_next_batch('aux')
+                minibatch_data = self.larcv_fetcher.fetch_next_batch("val",force_pop = True)
 
                 # Convert the input data to torch tensors
                 minibatch_data = self.to_torch(minibatch_data)
@@ -979,15 +1094,12 @@ class trainercore(object):
 
     def batch_process(self):
 
-        # At the begining of batch process, figure out the epoch size:
-        self._epoch_size = self._larcv_interface.size('primary')
-
         # This is the 'master' function, so it controls a lot
 
         # If we're not training, force the number of iterations to the epoch size or less
         if not self.args.training:
-            if self.args.iterations > int(self._epoch_size/self.args.minibatch_size) + 1:
-                self.args.iterations = int(self._epoch_size/self.args.minibatch_size) + 1
+            if self.args.iterations > int(self._train_data_size/self.args.minibatch_size) + 1:
+                self.args.iterations = int(self._train_data_size/self.args.minibatch_size) + 1
                 print('Number of iterations set to', self.args.iterations)
 
 

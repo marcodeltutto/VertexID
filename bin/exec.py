@@ -17,7 +17,7 @@ import argparse
 
 class VertexID(object):
 
-    def __init__(self):
+    def __init__(self, config=None):
 
         # This technique is taken from: https://chase-seibert.github.io/blog/2014/03/21/python-multilevel-argparse.html
         parser = argparse.ArgumentParser(
@@ -290,10 +290,18 @@ def main():
         trainer.initialize()
         trainer.batch_process()
 
-       
 
 
+# @hydra.main(config_path="../src/config", config_name="config")
+# def main(cfg : OmegaConf) -> None:
+#     s = VertexID(cfg)
+#     s.stop()
 
 if __name__ == '__main__':
-    s = VertexID()  
+    # main()
+    s = VertexID()
     s.stop()
+
+
+
+
