@@ -51,37 +51,37 @@ The most commonly used commands are:
 
         # Define parameters exclusive to training:
 
-        self.parser.add_argument('-lr','--learning-rate', 
-            type    = float, 
+        self.parser.add_argument('-lr','--learning-rate',
+            type    = float,
             default = 0.003,
             help    = 'Initial learning rate')
-        self.parser.add_argument('-si','--summary-iteration', 
-            type    = int, 
+        self.parser.add_argument('-si','--summary-iteration',
+            type    = int,
             default = 1,
             help    = 'Period (in steps) to store summary in tensorboard log')
-        self.parser.add_argument('-li','--logging-iteration', 
-            type    = int, 
+        self.parser.add_argument('-li','--logging-iteration',
+            type    = int,
             default = 1,
             help    = 'Period (in steps) to print values to log')
-        self.parser.add_argument('-ci','--checkpoint-iteration', 
-            type    = int, 
+        self.parser.add_argument('-ci','--checkpoint-iteration',
+            type    = int,
             default = 100,
             help    = 'Period (in steps) to store snapshot of weights')
-        self.parser.add_argument('--lr-schedule', 
-            type    = str, 
-            choices = ['flat', '1cycle', 'triangle_clr', 'exp_range_clr', 'decay', 'expincrease'], 
+        self.parser.add_argument('--lr-schedule',
+            type    = str,
+            choices = ['flat', '1cycle', 'triangle_clr', 'exp_range_clr', 'decay', 'expincrease'],
             default = 'flat',
             help    = 'Apply a learning rate schedule')
-        self.parser.add_argument('--optimizer', 
-            type    = str, 
-            choices = ['Adam', 'SGD'], 
+        self.parser.add_argument('--optimizer',
+            type    = str,
+            choices = ['Adam', 'SGD'],
             default = 'Adam',
             help    = 'Optimizer to use')
-        self.parser.add_argument('-cd','--checkpoint-directory', 
+        self.parser.add_argument('-cd','--checkpoint-directory',
             default = None,
             help    = 'Prefix (directory + file prefix) for snapshots of weights')
-        self.parser.add_argument('--weight-decay', 
-            type    = float, 
+        self.parser.add_argument('--weight-decay',
+            type    = float,
             default = 0.0,
             help    = "Weight decay strength")
 
@@ -105,12 +105,12 @@ The most commonly used commands are:
 
     def add_network_parsers(self, parser):
         # Here, we define the networks available.  In io test mode, used to determine what the IO is.
-        network_parser = parser.add_subparsers( 
-            title          = "Networks", 
+        network_parser = parser.add_subparsers(
+            title          = "Networks",
             dest           = "network",
             description    = 'Which network architecture to use.')
 
-        # Here, we do a switch on the networks allowed:        
+        # Here, we do a switch on the networks allowed:
         yolo.YOLOFlags().build_parser(network_parser)
 
 
@@ -189,18 +189,18 @@ The most commonly used commands are:
 
     def add_core_configuration(self, parser):
         # These are core parameters that are important for all modes:
-        parser.add_argument('-i', '--iterations', 
-            type    = int, 
+        parser.add_argument('-i', '--iterations',
+            type    = int,
             default = 5000,
             help    = "Number of iterations to process")
 
-        parser.add_argument('-d','--distributed', 
-            action  = 'store_true', 
+        parser.add_argument('-d','--distributed',
+            action  = 'store_true',
             default = False,
             help    = "Run with the MPI compatible mode")
-        parser.add_argument('-m','--compute-mode', 
-            type    = str, 
-            choices = ['CPU','GPU'], 
+        parser.add_argument('-m','--compute-mode',
+            type    = str,
+            choices = ['CPU','GPU'],
             default = 'GPU',
             help    = "Selection of compute device, CPU or GPU ")
         parser.add_argument('-im','--image-mode',
@@ -216,7 +216,7 @@ The most commonly used commands are:
             type    = str,
             default = 1024,
             help    = "Input image height")
-        parser.add_argument('-ld','--log-directory', 
+        parser.add_argument('-ld','--log-directory',
             default ="log/",
             help    ="Prefix (directory) for logging information")
 
@@ -226,45 +226,50 @@ The most commonly used commands are:
     def add_io_arguments(self, parser):
 
         # IO PARAMETERS FOR INPUT:
-        parser.add_argument('-f','--file', 
-            type    = str, 
+        parser.add_argument('-f','--file',
+            type    = str,
             default = "/Users/mdeltutt/Downloads/merged_sample_99.h5",
             help    = "IO Input File")
-        parser.add_argument('--input-dimension', 
-            type    = int, 
+        parser.add_argument('--input-dimension',
+            type    = int,
             default = 2,
             help    = "Dimensionality of data to use",
             choices = [2, 3] )
-        parser.add_argument('--start-index', 
-            type    = int, 
+        parser.add_argument('--start-index',
+            type    = int,
             default = 0,
             help    = "Start index, only used in inference mode")
 
-        parser.add_argument('--label-mode', 
-            type    = str, 
-            choices = ['split', 'all'], 
+        parser.add_argument('--label-mode',
+            type    = str,
+            choices = ['split', 'all'],
             default = 'all',
             help    = "Run with split labels (multiple classifiers) or all in one" )
 
         parser.add_argument('-mb','--minibatch-size',
-            type    = int, 
+            type    = int,
             default = 2,
             help    = "Number of images in the minibatch size")
-        
+
+        parser.add_argument('-ds', '--downsample-images',
+            default = 0,
+            type    = int,
+            help    = 'Dense downsampling of the images.  This is the number of downsamples applied (0 == none, 1 == once ...) ')
+
         # IO PARAMETERS FOR AUX INPUT:
-        parser.add_argument('--aux-file', 
-            type    = str, 
+        parser.add_argument('--aux-file',
+            type    = str,
             default = None,
             help    = "IO Aux Input File, or output file in inference mode")
 
 
         parser.add_argument('--aux-iteration',
-            type    = int, 
+            type    = int,
             default = 10,
             help    = "Iteration to run the aux operations")
 
         parser.add_argument('--aux-minibatch-size',
-            type    = int, 
+            type    = int,
             default = 2,
             help    = "Number of images in the minibatch size")
 
@@ -278,13 +283,13 @@ def main():
     FLAGS.parse_args()
     # FLAGS.dump_config()
 
-    
+
 
     if FLAGS.MODE is None:
         raise Exception()
 
 
-        
+
     if FLAGS.MODE == 'train' or FLAGS.MODE == 'inference':
 
         trainer.initialize()

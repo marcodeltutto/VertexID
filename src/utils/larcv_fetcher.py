@@ -14,7 +14,7 @@ from larcv.config_builder import ConfigBuilder
 
 class larcv_fetcher(object):
 
-    def __init__(self, mode, distributed, access_mode, dimension, data_format, seed=None):
+    def __init__(self, mode, distributed, access_mode, dimension, data_format, downsample_images, seed=None):
 
         if mode not in ['train', 'inference', 'iotest']:
             raise Exception("Larcv Fetcher can't handle mode ", mode)
@@ -35,6 +35,7 @@ class larcv_fetcher(object):
         self.image_mode      = data_format
         self.input_dimension = dimension
         self.distributed     = distributed
+        self.downsample_images = downsample_images
 
 
         self.writer     = None
@@ -47,6 +48,8 @@ class larcv_fetcher(object):
 
 
     def prepare_sample(self, name, input_file, batch_size, color=None, start_index = 0):
+
+        print('lllllllll', input_file)
 
 
 
@@ -111,6 +114,7 @@ class larcv_fetcher(object):
             data_keys[f'label_{label_name}'] = f'label_{label_name}'
 
         logger.debug(cb.print_config())
+        print(cb.print_config())
 
         # Prepare data managers:
         io_config = {
@@ -142,6 +146,7 @@ class larcv_fetcher(object):
             self._larcv_interface.set_next_index(name, start_index)
 
         while self._larcv_interface.is_reading(name):
+            print('Reading...')
             time.sleep(0.1)
 
         # # Here, we pause in distributed mode to make sure all loaders are ready:
@@ -149,6 +154,7 @@ class larcv_fetcher(object):
         #     from mpi4py import MPI
         #     MPI.COMM_WORLD.Barrier()
 
+        print('--------------------------------------- sample prepared', self._larcv_interface.fetch_minibatch_dims(name))
         return self._larcv_interface.size(name)
 
 
@@ -188,6 +194,9 @@ class larcv_fetcher(object):
             pop=pop,fetch_meta_data=metadata)
         minibatch_dims = self._larcv_interface.fetch_minibatch_dims(name)
 
+        # print('Fetching minibatch of data', minibatch_data)
+
+
 
         # This brings up the next data to current data
         if pop:
@@ -209,6 +218,7 @@ class larcv_fetcher(object):
 
         # Parse out the vertex info:
         minibatch_data['vertex'] = minibatch_data['vertex'][:,:,0,0:3]
+        minibatch_data['vertex'] = minibatch_data['vertex'].reshape((-1, 3))
 
         # Also, we map the vertex from 0 to 1 across the image.  The image size is
         # [360, 200, 500] and the origin is at [0, -100, 0]
@@ -222,6 +232,8 @@ class larcv_fetcher(object):
             if self.input_dimension == 3:
                 minibatch_data['image'] = data_transforms.larcvsparse_to_dense_3d(minibatch_data['image'])
             else:
+                x_dim = int(1536/2**self.downsample_images)
+                y_dim = int(1024/2**self.downsample_images)
                 minibatch_data['image'] = data_transforms.larcvsparse_to_dense_2d(minibatch_data['image'])
         elif self.image_mode == 'sparse':
             # Have to convert the input image from dense to sparse format:

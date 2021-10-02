@@ -42,14 +42,16 @@ class trainercore(object):
         else:
             self.mode = 'iotest'
 
-        access_mode = "serial_access" if self.mode == "training" else "random_blocks"
+        access_mode = "random_blocks" if self.mode == "training" else "serial_access"
+        access_mode = "serial_access" if self.mode == "training" else "serial_access"
 
         self.larcv_fetcher = larcv_fetcher.larcv_fetcher(
             mode            = self.mode,
             distributed     = self.args.distributed,
             access_mode     = access_mode,
             dimension       = self.args.input_dimension,
-            data_format     = self.args.image_mode
+            data_format     = self.args.image_mode,
+            downsample_images = self.args.downsample_images,
         )
 
         self._iteration       = 0
@@ -57,7 +59,6 @@ class trainercore(object):
 
         self._cleanup         = []
 
-        print('-------------------------------- init')
 
     def __del__(self):
         for f in self._cleanup:
@@ -102,7 +103,6 @@ class trainercore(object):
         elif self.mode == "inference":
             pass
 
-        print('-------------------------------- init io')
         return configured_keys
 
         # First, verify the files exist:
@@ -236,6 +236,9 @@ class trainercore(object):
         output_shape = self.larcv_fetcher.output_shape('primary')
         input_shape = self.larcv_fetcher.input_shape('primary')
 
+        print('OVERRIDING input_shape, remember to fix this once you have a proper file!', input_shape)
+        input_shape = [input_shape[0], self.args.image_width, self.args.image_height]
+
         print('Input shape:', input_shape)
         print('Output shape:', output_shape)
 
@@ -351,7 +354,6 @@ class trainercore(object):
             for key in self.args.keyword_label:
                 self._log_keys.append('acc/{}'.format(key))
 
-        print('-------------------------------- initialize')
 
     def get_device(self):
         # Convert the input data to torch tensors
@@ -582,14 +584,15 @@ class trainercore(object):
         - the transformed target
         - a mask that can mask the entries where there are real objects
         '''
+        # print('target is ', target)
         pitch = 0.4
         padding_x = 286
         padding_y = 124
 
         batch_size = target.size(0)
 
-        target_out = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels)
-        mask = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool)
+        target_out = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels, device=self.get_device())
+        mask = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool, device=self.get_device())
 
         step_w = self.args.image_width / grid_size_w
         step_h = self.args.image_height / grid_size_h
@@ -612,7 +615,7 @@ class trainercore(object):
 
             mask[batch_id, t_i, t_j] = 1
 
-            print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
+            # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
 
         return target_out, mask
 
@@ -836,9 +839,9 @@ class trainercore(object):
 
     def increment_global_step(self):
 
-        previous_epoch = int((self._global_step * self.args.minibatch_size) / self._epoch_size)
+        previous_epoch = int((self._global_step * self.args.minibatch_size) / self._train_data_size)
         self._global_step += 1
-        current_epoch = int((self._global_step * self.args.minibatch_size) / self._epoch_size)
+        current_epoch = int((self._global_step * self.args.minibatch_size) / self._train_data_size)
 
         self.on_step_end()
 
@@ -892,7 +895,7 @@ class trainercore(object):
 
         # For a train step, we fetch data, run a forward and backward pass, and
         # if this is a logging step, we compute some logging metrics.
-        torch.autograd.set_detect_anomaly(True)
+        # torch.autograd.set_detect_anomaly(True)
         self._net.train()
         # print(self._net)
 

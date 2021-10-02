@@ -40,7 +40,7 @@ class Block(nn.Module):
     def __init__(self, infilters, outfilters, kernel, stride, padding, batch_norm, activation):
 
         nn.Module.__init__(self)
-        
+
         self.batch_norm = batch_norm
 
         if not batch_norm: bias = True
@@ -52,13 +52,13 @@ class Block(nn.Module):
             pad = 0
 
         self.conv1 = torch.nn.Conv2d(
-            in_channels  = infilters, 
-            out_channels = outfilters, 
-            kernel_size  = kernel, 
+            in_channels  = infilters,
+            out_channels = outfilters,
+            kernel_size  = kernel,
             stride       = stride,
             padding      = padding,
             bias         = bias)
-        
+
         if batch_norm:
             self.bn1  = torch.nn.BatchNorm2d(outfilters)
 
@@ -84,10 +84,10 @@ class ResidualBlock(nn.Module):
 
     def __init__(self, infilters, outfilters1, outfilters2, padding=1, batch_norm=True, activation='leaky'):
         nn.Module.__init__(self)
-        
+
         self.batch_norm = batch_norm
 
-        
+
         conv1_kernel = 1
         if padding:
             pad = (conv1_kernel - 1) // 2
@@ -95,13 +95,13 @@ class ResidualBlock(nn.Module):
             pad = 0
 
         self.conv1 = torch.nn.Conv2d(
-            in_channels  = infilters, 
-            out_channels = outfilters1, 
-            kernel_size  = conv1_kernel, 
+            in_channels  = infilters,
+            out_channels = outfilters1,
+            kernel_size  = conv1_kernel,
             stride       = 1,
             padding      = pad,
             bias         = False)
-        
+
         if batch_norm:
             self.bn1  = torch.nn.BatchNorm2d(outfilters1)
 
@@ -113,9 +113,9 @@ class ResidualBlock(nn.Module):
             pad = 0
 
         self.conv2 = torch.nn.Conv2d(
-            in_channels  = outfilters1, 
-            out_channels = outfilters2, 
-            kernel_size  = conv2_kernel, 
+            in_channels  = outfilters1,
+            out_channels = outfilters2,
+            kernel_size  = conv2_kernel,
             stride       = 1,
             padding      = pad,
             bias         = False)
@@ -133,7 +133,7 @@ class ResidualBlock(nn.Module):
 
         residual = x
 
-        out = self.conv1(x)        
+        out = self.conv1(x)
         if self.batch_norm:
             out = self.bn1(out)
 
@@ -176,7 +176,7 @@ class RouteBlock(nn.Module):
     def __init__(self, start, end=None):
 
         nn.Module.__init__(self)
-        
+
         self._start = start
         self._end = end
 
@@ -208,13 +208,13 @@ class YOLOBlock(nn.Module):
         self._num_classes = num_classes
         self._cuda = cuda
 
-    def predict_transform(self, prediction):    
+    def predict_transform(self, prediction):
         '''
-        This function takes a detection feature map 
-        and turns it into a 2-D tensor, 
-        where each row of the tensor corresponds 
+        This function takes a detection feature map
+        and turns it into a 2-D tensor,
+        where each row of the tensor corresponds
         to attributes of a bounding box.
-        ''' 
+        '''
 
 
         prediction = prediction.permute(0,2,3,1)
@@ -226,7 +226,7 @@ class YOLOBlock(nn.Module):
 
 
 
-        # # The output of YOLO is a convolutional feature map that contains 
+        # # The output of YOLO is a convolutional feature map that contains
         # # the bounding box attributes along the depth of the feature map.
 
         # batch_size = prediction.size(0)
@@ -236,10 +236,10 @@ class YOLOBlock(nn.Module):
         # bbox_attrs = 3 + self._num_classes # 5 contains pos_x, pos_y, obj_score
         # num_anchors = len(self._anchors)
         # # print('>>> prediction', prediction.shape)
-        
+
         # # Now, prediction is a tensor with dimensions
         # # n x n x f, with f number of filters and n
-        # # is the dimension of the downsample image     
+        # # is the dimension of the downsample image
 
         # # The first step is to use 'view' to make this tensor
         # # of dimension (n*n) x f, so that the image dimensions
@@ -253,16 +253,16 @@ class YOLOBlock(nn.Module):
         # prediction = prediction.transpose(1,2).contiguous()
         # # print('>>> prediction', prediction.shape)
 
-        # # Now we are going to reshape this in a way that each row 
+        # # Now we are going to reshape this in a way that each row
         # # of this tensor corresponds to attributes of a bounding box
         # # prediction = prediction.view(batch_size, grid_size_w*grid_size_h*num_anchors, bbox_attrs)
         # prediction = prediction.view(batch_size, grid_size_w*grid_size_h, bbox_attrs)
         # # print('>>> prediction', prediction.shape)
 
-        # # The dimensions of the anchors is wrt to the height and width 
-        # # attributes of the net block. These attributes describe 
-        # # the dimensions of the input image, which is larger 
-        # # (by a factor of 'stride') than the detection map. 
+        # # The dimensions of the anchors is wrt to the height and width
+        # # attributes of the net block. These attributes describe
+        # # the dimensions of the input image, which is larger
+        # # (by a factor of 'stride') than the detection map.
         # # We need to divide the anchors by the stride of the detection feature map.
         # # anchors = [(a[0]/stride, a[1]/stride) for a in self._anchors]
         # # print('>>> anchors', anchors)
@@ -270,13 +270,13 @@ class YOLOBlock(nn.Module):
         # # Now, one row of the tensor contains:
         # # - center_x
         # # - center_y
-        # # - obj_score    
+        # # - obj_score
 
-        # # Need to apply sigmoid to center_x, center_y and obj_score 
+        # # Need to apply sigmoid to center_x, center_y and obj_score
         # prediction[:,:,0] = torch.sigmoid(prediction[:,:,0])
         # prediction[:,:,1] = torch.sigmoid(prediction[:,:,1])
         # prediction[:,:,2] = torch.sigmoid(prediction[:,:,2])
-        
+
         # # Need to add the center offsets
         # # grid_x = np.arange(grid_size_w)
         # # grid_y = np.arange(grid_size_h)
@@ -288,7 +288,7 @@ class YOLOBlock(nn.Module):
         # #     x_offset = x_offset.cuda()
         # #     y_offset = y_offset.cuda()
 
-        # # x_y_offset = torch.cat((x_offset, y_offset), 1).view(-1,2).unsqueeze(0)    
+        # # x_y_offset = torch.cat((x_offset, y_offset), 1).view(-1,2).unsqueeze(0)
         # # prediction[:,:,:2] += x_y_offset
 
         # return prediction
@@ -334,12 +334,12 @@ class YOLO(nn.Module):
         #
         # First convolutional block
         #
-        self.initial_convolution = Block(infilters=prev_filters, 
-                                         outfilters=n_filters, 
-                                         kernel=3, 
-                                         stride=1, 
-                                         padding=1, 
-                                         batch_norm=True, 
+        self.initial_convolution = Block(infilters=prev_filters,
+                                         outfilters=n_filters,
+                                         kernel=3,
+                                         stride=1,
+                                         padding=1,
+                                         batch_norm=True,
                                          activation='leaky')
         prev_filters = n_filters
         n_filters = filter_increase(n_filters)
@@ -365,12 +365,12 @@ class YOLO(nn.Module):
         for i in range(0, self.n_core_blocks):
 
             # Downlsampling block
-            self.dowsample.append(Block(infilters=prev_filters, 
-                                        outfilters=n_filters, 
-                                        kernel=3, 
-                                        stride=2, 
-                                        padding=1, 
-                                        batch_norm=True, 
+            self.dowsample.append(Block(infilters=prev_filters,
+                                        outfilters=n_filters,
+                                        kernel=3,
+                                        stride=2,
+                                        padding=1,
+                                        batch_norm=True,
                                         activation='leaky'))
 
             self.add_module("downsample_{}".format(i), self.dowsample[-1])
@@ -378,10 +378,10 @@ class YOLO(nn.Module):
             # Residual block series
             self.residual.append(ResidualBlockSeries(n=i,
                                                      n_blocks=blocks_multiplicity[i],
-                                                     infilters=n_filters, 
-                                                     outfilters1=prev_filters, 
+                                                     infilters=n_filters,
+                                                     outfilters1=prev_filters,
                                                      outfilters2=n_filters))
-            
+
             self.add_module("resblock_{}".format(i), self.residual[-1])
 
             prev_filters = n_filters
@@ -389,7 +389,7 @@ class YOLO(nn.Module):
 
         # Now there is another series of convolutional blocks
         # Parameters below correspond to the darknet configuration
-        # Basically there are 7 convolutional blocks, with the 
+        # Basically there are 7 convolutional blocks, with the
         # following caracteristics:
         # batch_normalize = [True] * 7
         # pad = [1] * 7
@@ -410,29 +410,29 @@ class YOLO(nn.Module):
 
         for i in range(0, len(filter_sizes)):
 
-            self.convolution_blocks_1.append(Block(infilters=prev_filters, 
-                                                   outfilters=filter_sizes[i], 
-                                                   kernel=kernel_size[i], 
-                                                   stride=stride[i], 
-                                                   padding=pad[i], 
-                                                   batch_norm=batch_normalize[i], 
+            self.convolution_blocks_1.append(Block(infilters=prev_filters,
+                                                   outfilters=filter_sizes[i],
+                                                   kernel=kernel_size[i],
+                                                   stride=stride[i],
+                                                   padding=pad[i],
+                                                   batch_norm=batch_normalize[i],
                                                    activation=activation[i]))
 
             prev_filters = filter_sizes[i]
-            
+
             self.add_module("convolution_block_1_{}".format(i), self.convolution_blocks_1[-1])
 
 
         self.yololayer_1 = YOLOBlock(inp_dim_w=self.input_shape[1],
                                      inp_dim_h=self.input_shape[2],
-                                     anchors=self.anchors, 
+                                     anchors=self.anchors,
                                      num_classes=self.num_classes,
                                      cuda=self._cuda)
         self.add_module("yololayer_1", self.yololayer_1)
 
 
     def forward(self, x):
-        
+
         batch_size = x.shape[0]
 
         # Reshape this tensor into the right shape to apply this multiplane network.
@@ -440,21 +440,21 @@ class YOLO(nn.Module):
         x = torch.chunk(x, chunks=self.nplanes, dim=1)
 
         x = [self.initial_convolution(_x) for _x in x]
-        print('after initial_convolution', x[0].size())
+        # print('after initial_convolution', x[0].size())
 
         for i in range(0, self.n_core_blocks):
             x = [self.dowsample[i](_x) for _x in x]
-            print(i, 'after dowsample', x[0].size())
+            # print(i, 'after dowsample', x[0].size())
             x = [self.residual[i](_x) for _x in x]
-            print(i, 'after residual', x[0].size())
+            # print(i, 'after residual', x[0].size())
 
         for i in range(0, len(self.convolution_blocks_1)):
             x = [self.convolution_blocks_1[i](_x) for _x in x]
-            print(i, 'after convolution_blocks_1', x[0].size())
+            # print(i, 'after convolution_blocks_1', x[0].size())
 
-        
+
         x = [self.yololayer_1(_x) for _x in x]
-        print('after yolo_1', x[0].size())
+        # print('after yolo_1', x[0].size())
 
 
         # Doing only plane 2, should be changed later

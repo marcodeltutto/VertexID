@@ -230,25 +230,29 @@ def larcvsparse_to_dense_2d(input_array, dense_shape=[1536, 1024]):
 
 
     batch_size = input_array.shape[0]
-    n_planes   = input_array.shape[1]
+    n_planes   = input_array.shape[3]
+
     output_array = numpy.zeros((batch_size, n_planes, dense_shape[0], dense_shape[1]), dtype=numpy.float32)
+
 
     x_coords = input_array[:,:,:,0]
     y_coords = input_array[:,:,:,1]
     val_coords = input_array[:,:,:,2]
 
 
+    filled_locs = val_coords != -999
+    non_zero_locs = val_coords != 0.0
+    mask = numpy.logical_and(filled_locs,non_zero_locs)
     # Find the non_zero indexes of the input:
-    batch_index, plane_index, voxel_index = numpy.where(val_coords != -999)
+    batch_index, plane_index, voxel_index = numpy.where(filled_locs)
+
 
     values  = val_coords[batch_index, plane_index, voxel_index]
     x_index = numpy.int32(x_coords[batch_index, plane_index, voxel_index])
     y_index = numpy.int32(y_coords[batch_index, plane_index, voxel_index])
 
-
     # Fill in the output tensor
-
-    output_array[batch_index, plane_index, x_index, y_index] = values
+    output_array[batch_index, plane_index, y_index, x_index] = values
 
     return output_array
 
