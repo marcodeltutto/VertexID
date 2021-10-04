@@ -79,7 +79,8 @@ class larcv_fetcher(object):
                 producer  = "dunevoxels",
                 name      = name+"data",
                 MaxVoxels = 20000,
-                Augment   = False
+                Augment   = False,
+                Channels  = [0,],
                 )
 
         else:
@@ -88,7 +89,7 @@ class larcv_fetcher(object):
                 producer  = "dunevoxels",
                 name      = name+"data",
                 MaxVoxels = 30000,
-                Augment   = False
+                Augment   = False,
                 )
 
         # Add something to convert the neutrino particles into bboxes:
@@ -103,6 +104,7 @@ class larcv_fetcher(object):
             producer  = "neutrino",
             name      = name+"bbox",
             MaxBoxes  = 2,
+            Channels  = [0,]
             )
 
 
