@@ -69,7 +69,10 @@ class Block(nn.Module):
 
     def forward(self, x):
 
+        # print('Block x is ', x)
         out = self.conv1(x)
+        if (torch.isnan(out)[0][0][0][0].item()):
+            print('nan')
         if self.batch_norm:
             out = self.bn1(out)
         out = self.activ(out)
@@ -134,6 +137,8 @@ class ResidualBlock(nn.Module):
         residual = x
 
         out = self.conv1(x)
+        if (out.isnan().any()):
+            print('nan in forward pass ----------------------------------------------------------')
         if self.batch_norm:
             out = self.bn1(out)
 
@@ -439,13 +444,16 @@ class YOLO(nn.Module):
         self.nplanes = 3
         x = torch.chunk(x, chunks=self.nplanes, dim=1)
 
+        # print('initial', x[0].size())
         x = [self.initial_convolution(_x) for _x in x]
         # print('after initial_convolution', x[0].size())
+        if (torch.isnan(x[2])[0][0][0][0].item()):
+            print('nan!')
 
         for i in range(0, self.n_core_blocks):
             x = [self.dowsample[i](_x) for _x in x]
             # print(i, 'after dowsample', x[0].size())
-            x = [self.residual[i](_x) for _x in x]
+            # x = [self.residual[i](_x) for _x in x]
             # print(i, 'after residual', x[0].size())
 
         for i in range(0, len(self.convolution_blocks_1)):

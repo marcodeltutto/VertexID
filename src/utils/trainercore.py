@@ -76,8 +76,8 @@ class trainercore(object):
 
         # If mode is train, prepare the train file.
         if self.mode == "train" or self.mode == "iotest":
-            if not os.path.exists(self.args.file):
-                raise Exception(f"File {self.args.file} not found")
+            # if not os.path.exists(self.args.file):
+            #     raise Exception(f"File {self.args.file} not found")
 
             # Prepare the training sample:
             self._train_data_size = self.larcv_fetcher.prepare_sample(
@@ -631,6 +631,9 @@ class trainercore(object):
         - a single scalar for the optimizer to use
         '''
 
+        # print('shape of data', minibatch_data['vertex'].shape)
+        # print('shape of pred', prediction.shape)
+
         target, mask = self._target_to_yolo(target=minibatch_data['vertex'],
                                             n_channels=prediction.size(3),
                                             grid_size_w=prediction.size(1),
@@ -667,6 +670,12 @@ class trainercore(object):
 
         loss = loss_x + loss_y + loss_obj + loss_cls
 
+        # print('LOSS OBJ IS ', loss_obj)
+        # print('LOSS X IS ', loss_x)
+        # print('LOSS Y IS ', loss_y)
+        # print('LOSS CLS IS ', loss_cls)
+        # print('LOSS IS ', loss)
+
         return loss
 
 
@@ -681,7 +690,7 @@ class trainercore(object):
 
         returns:
         - iou: intersection over union (union: all cells where we have a real object or where
-        we predict to be an object; intersection: cells where there is a real object, and we 
+        we predict to be an object; intersection: cells where there is a real object, and we
         predict that there is an object
         - r^2 averaged over cells with real objects
         '''
@@ -895,7 +904,7 @@ class trainercore(object):
 
         # For a train step, we fetch data, run a forward and backward pass, and
         # if this is a logging step, we compute some logging metrics.
-        # torch.autograd.set_detect_anomaly(True)
+        torch.autograd.set_detect_anomaly(True)
         self._net.train()
         # print(self._net)
 
@@ -910,20 +919,22 @@ class trainercore(object):
         io_end_time = datetime.datetime.now()
 
         # numpy.save('tmp', minibatch_data['image'])
+        if (numpy.all((minibatch_data['image'] == 0))):
+            print('*** Image is all zeros! ***')
 
         minibatch_data = self.to_torch(minibatch_data)
 
         # Run a forward pass of the model on the input image:
         logits = self._net(minibatch_data['image'])
-        print("Completed forward pass")
+        # print("Completed forward pass")
 
         # Compute the loss based on the logits
         loss = self._calculate_loss(minibatch_data, logits)
-        print('loss', loss.item())
+        # print('loss', loss.item())
 
         # Compute the gradients for the network parameters:
         loss.backward()
-        print("Completed backward pass")
+        # print("Completed backward pass")
 
         # print('weights', self._net.initial_convolution.conv1.weight)
         # print('weights grad', self._net.initial_convolution.conv1.weight.grad)
@@ -1083,7 +1094,8 @@ class trainercore(object):
 
     def stop(self):
         # Mostly, this is just turning off the io:
-        self._larcv_interface.stop()
+        # self._larcv_interface.stop()
+        pass
 
     def checkpoint(self):
 

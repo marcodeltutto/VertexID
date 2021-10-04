@@ -1,5 +1,6 @@
 import os
 import time
+import glob
 
 from . import data_transforms
 import tempfile
@@ -49,20 +50,22 @@ class larcv_fetcher(object):
 
     def prepare_sample(self, name, input_file, batch_size, color=None, start_index = 0):
 
-        print('lllllllll', input_file)
+        files = glob.glob(input_file)
 
-
+        if len(files) == 0:
+            raise Exception(f"Cannot find files with pattern {input_file}.")
 
         # First, verify the files exist:
-        if not os.path.exists(input_file):
-            raise Exception(f"File {input_file} not found")
+        for f in files:
+            if not os.path.exists(f):
+                raise Exception(f"File {f} not found")
 
 
         cb = ConfigBuilder()
-        cb.set_parameter([input_file], "InputFiles")
-        cb.set_parameter(5, "ProcessDriver", "IOManager", "Verbosity")
-        cb.set_parameter(5, "ProcessDriver", "Verbosity")
-        cb.set_parameter(5, "Verbosity")
+        cb.set_parameter(files, "InputFiles")
+        cb.set_parameter(3, "ProcessDriver", "IOManager", "Verbosity")
+        cb.set_parameter(3, "ProcessDriver", "Verbosity")
+        cb.set_parameter(3, "Verbosity")
 
         # Build up the data_keys:
         data_keys = {}
@@ -146,7 +149,6 @@ class larcv_fetcher(object):
             self._larcv_interface.set_next_index(name, start_index)
 
         while self._larcv_interface.is_reading(name):
-            print('Reading...')
             time.sleep(0.1)
 
         # # Here, we pause in distributed mode to make sure all loaders are ready:
@@ -154,7 +156,6 @@ class larcv_fetcher(object):
         #     from mpi4py import MPI
         #     MPI.COMM_WORLD.Barrier()
 
-        print('--------------------------------------- sample prepared', self._larcv_interface.fetch_minibatch_dims(name))
         return self._larcv_interface.size(name)
 
 
@@ -193,6 +194,11 @@ class larcv_fetcher(object):
         minibatch_data = self._larcv_interface.fetch_minibatch_data(name,
             pop=pop,fetch_meta_data=metadata)
         minibatch_dims = self._larcv_interface.fetch_minibatch_dims(name)
+
+        if (numpy.all((minibatch_data['image'] == 0))):
+            print('*** Image is all zeros! ***')
+
+
 
         # print('Fetching minibatch of data', minibatch_data)
 
@@ -234,7 +240,7 @@ class larcv_fetcher(object):
             else:
                 x_dim = int(1536/2**self.downsample_images)
                 y_dim = int(1024/2**self.downsample_images)
-                minibatch_data['image'] = data_transforms.larcvsparse_to_dense_2d(minibatch_data['image'])
+                minibatch_data['image'] = data_transforms.larcvsparse_to_dense_2d(minibatch_data['image'], dense_shape=[x_dim, y_dim])
         elif self.image_mode == 'sparse':
             # Have to convert the input image from dense to sparse format:
             if self.input_dimension == 3:
