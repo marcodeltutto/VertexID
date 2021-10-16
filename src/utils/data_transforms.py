@@ -228,10 +228,6 @@ def larcvsparse_to_scnsparse_2d(input_array):
 
 def larcvsparse_to_dense_2d(input_array, dense_shape=[1536, 1024]):
 
-    if (numpy.all((input_array == 0))):
-        print('larcvsparse_to_dense_2d ****************************************************************************************************')
-
-
     batch_size = input_array.shape[0]
     n_planes   = input_array.shape[3]
 
@@ -255,7 +251,7 @@ def larcvsparse_to_dense_2d(input_array, dense_shape=[1536, 1024]):
     y_index = numpy.int32(y_coords[batch_index, plane_index, voxel_index])
 
     # Fill in the output tensor
-    output_array[batch_index, plane_index, y_index, x_index] = values
+    output_array[batch_index, plane_index, x_index, y_index] = values
 
     return output_array
 

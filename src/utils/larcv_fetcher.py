@@ -80,7 +80,7 @@ class larcv_fetcher(object):
                 name      = name+"data",
                 MaxVoxels = 20000,
                 Augment   = False,
-                Channels  = [0,],
+                Channels  = [0, 1, 2],
                 )
 
         else:
@@ -147,8 +147,8 @@ class larcv_fetcher(object):
 
 
 
-        if self.mode == "inference":
-            self._larcv_interface.set_next_index(name, start_index)
+        # if self.mode == "inference":
+        self._larcv_interface.set_next_index(name, start_index)
 
         while self._larcv_interface.is_reading(name):
             time.sleep(0.1)
@@ -230,8 +230,8 @@ class larcv_fetcher(object):
 
         # Also, we map the vertex from 0 to 1 across the image.  The image size is
         # [360, 200, 500] and the origin is at [0, -100, 0]
-        minibatch_data['vertex'] += self.vertex_origin
-        minibatch_data['vertex'] /= self.image_dimensions
+        # minibatch_data['vertex'] += self.vertex_origin
+        # minibatch_data['vertex'] /= self.image_dimensions
 
 
         # Here, do some massaging to convert the input data to another format, if necessary:

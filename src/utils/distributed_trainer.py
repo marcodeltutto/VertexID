@@ -7,11 +7,16 @@ from collections import OrderedDict
 import numpy
 
 import torch
+
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+
+
 import horovod.torch as hvd
 hvd.init()
 
 
-from larcv.distributed_queue_interface import queue_interface
+# from larcv.distributed_queue_interface import queue_interface
 
 
 from .trainercore import trainercore
@@ -53,7 +58,7 @@ def lr_increase(step):
     # if epoch <= flat_warmup:
     #     return 1.0
     # elif epoch < flat_warmup + linear_warmup:
-    #     return 1.0 + (target - 1) * (epoch - flat_warmup) / linear_warmup 
+    #     return 1.0 + (target - 1) * (epoch - flat_warmup) / linear_warmup
     # elif epoch <= flat_warmup + linear_warmup + full:
     #     return target
     # else:
@@ -61,9 +66,9 @@ def lr_increase(step):
 
 
 def one_cycle_clr(step):
-    
+
     peak = peak_lr / self.args.learning_rate
-    
+
     cycle_steps  = int(self.args.iterations*cycle_len)
     end_steps = self.args.iterations - cycle_steps
     # Which cycle are we in?
@@ -75,11 +80,11 @@ def one_cycle_clr(step):
 
     if cycle < 1:
 #         base_multiplier *= 0.5
-        
+
         if intra_step > cycle_steps*0.5:
             intra_step = cycle_steps - intra_step
 
-        value = intra_step * (peak) /(0.5*cycle_steps) 
+        value = intra_step * (peak) /(0.5*cycle_steps)
 
     else:
         value = (intra_step / end_steps)*-1.0
@@ -96,7 +101,7 @@ max_lr['3d'] = 0.0035
 
 def triangle_clr(step):
     '''
-    Implements the triangular cycle 
+    Implements the triangular cycle
     learning rate schedule
     '''
     step_size = 100
@@ -106,19 +111,19 @@ def triangle_clr(step):
 
     return (min_lr[self.args.image_type] + diff * max(0, func)) / self.args.learning_rate
 
-def exp_range_clr(step, 
+def exp_range_clr(step,
                   step_size = 100,
-                  min_lr=min_lr[self.args.image_type], 
-                  max_lr=max_lr[self.args.image_type], 
-                  mode='exp_range', 
+                  min_lr=min_lr[self.args.image_type],
+                  max_lr=max_lr[self.args.image_type],
+                  mode='exp_range',
                   gamma=0.999):
     '''
-    Implements the cyclical lr with exp decrease 
+    Implements the cyclical lr with exp decrease
     learning rate schedule
     '''
     scale_func = 1
     if mode == 'exp_range':
-        scale_func = gamma**step 
+        scale_func = gamma**step
 
     max_lr *= scale_func
 
@@ -136,9 +141,9 @@ def exp_range_clr(step,
 
 def exp_increase_lr(step):
   '''
-  This function increases the learning rate exponentialy 
-  from start_lr to end_lr. It can be used to study the loss 
-  vs. learning rate and fins a proper interaval in which 
+  This function increases the learning rate exponentialy
+  from start_lr to end_lr. It can be used to study the loss
+  vs. learning rate and fins a proper interaval in which
   to vary the learning rate.
   '''
 
@@ -154,27 +159,29 @@ class distributed_trainer(trainercore):
     a NotImplemented error.
 
     '''
-    def __init__(self):
+    def __init__(self, args):
         # Rely on the base class for most standard parameters, only
         # search for parameters relevant for distributed computing here
 
+        trainer.__init__(self, args)
+
         # Put the IO rank as the last rank in the COMM, since rank 0 does tf saves
-        root_rank = hvd.size() - 1 
+        root_rank = hvd.size() - 1
 
         if self.args.COMPUTE_MODE == "GPU":
             os.environ['CUDA_VISIBLE_DEVICES'] = str(hvd.local_rank())
-            
 
-        self._larcv_interface = queue_interface()#read_option='read_from_single_local_rank')
+
+        # self._larcv_interface = queue_interface()#read_option='read_from_single_local_rank')
         self._iteration       = 0
         self._rank            = hvd.rank()
+        self._local_rank            = hvd.local_rank()
         self._cleanup         = []
         self._global_step     = torch.as_tensor(-1)
 
         if self._rank == 0:
             self.args.dump_config()
-        # Make sure that 'learning_rate' and 'TRAINING'
-        # are in net network parameters:
+
 
 
     def __del__(self):
@@ -185,7 +192,7 @@ class distributed_trainer(trainercore):
 
         if hvd.rank() == 0:
             trainercore.save_model(self)
-            
+
 
     def init_optimizer(self):
 
@@ -228,6 +235,12 @@ class distributed_trainer(trainercore):
             self._aux_saver = None
 
 
+    def print_network_info(self):
+        if self._rank == 0:
+            trainer.print_network_info(self)
+        return
+
+
     def restore_model(self):
         if hvd.rank() == 0:
             state = trainercore.restore_model(self)
@@ -262,7 +275,7 @@ class distributed_trainer(trainercore):
         # print("Rank {}".format(hvd.rank()) + " Built network")
 
 
-        if self.args.training: 
+        if self.args.training:
             self._net.train(True)
 
 
@@ -282,7 +295,7 @@ class distributed_trainer(trainercore):
         # If restoring, this will restore the model on the root node
         self.restore_model()
         # print("Rank {}".format(hvd.rank()) + " Restored Model if necessary")
-        
+
         self._global_step = hvd.broadcast(self._global_step, root_rank = 0)
 
         # This is important to ensure LR continuity after restoring:
@@ -308,7 +321,7 @@ class distributed_trainer(trainercore):
                 for k, v in state.items():
                     if torch.is_tensor(v):
                         state[k] = v.cuda()
-            
+
 
         print("Rank ", hvd.rank(), next(self._net.parameters()).device)
 
@@ -316,7 +329,7 @@ class distributed_trainer(trainercore):
             self._log_keys = ['loss', 'accuracy']
         elif self.args.label_mode == 'split':
             self._log_keys = ['loss']
-            for key in self.args.keyword_label: 
+            for key in self.args.keyword_label:
                 self._log_keys.append('acc/{}'.format(key))
 
 
@@ -327,7 +340,7 @@ class distributed_trainer(trainercore):
         if hvd.rank() == 0:
             trainercore.summary(self, metrics, saver)
         return
-        
+
     def _compute_metrics(self, logits, minibatch_data, loss):
         # This function calls the parent function which computes local metrics.
         # Then, it performs an all reduce on all metrics:

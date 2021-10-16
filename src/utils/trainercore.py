@@ -43,7 +43,7 @@ class trainercore(object):
             self.mode = 'iotest'
 
         access_mode = "random_blocks" if self.mode == "training" else "serial_access"
-        access_mode = "serial_access" if self.mode == "training" else "serial_access"
+        # access_mode = "serial_access" if self.mode == "training" else "serial_access"
 
         self.larcv_fetcher = larcv_fetcher.larcv_fetcher(
             mode            = self.mode,
@@ -584,7 +584,7 @@ class trainercore(object):
         - the transformed target
         - a mask that can mask the entries where there are real objects
         '''
-        # print('target is ', target)
+        print('target is ', target)
         pitch = 0.4
         padding_x = 286
         padding_y = 124
@@ -615,29 +615,34 @@ class trainercore(object):
 
             mask[batch_id, t_i, t_j] = 1
 
-            # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
+            print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
 
+        # print('target_out', target_out)
+        numpy.save('yolo_tgt', target_out.cpu())
         return target_out, mask
 
-    def _calculate_loss(self, minibatch_data, prediction):
+    def _calculate_loss(self, target, mask, prediction, full=False):
         '''
         Calculate the loss.
 
         arguments:
-        - minibatch_data: the minibatch_data from larcv
+        - target: the vertex data
+        - mask: a mask indicating where the true vertices are
         - prediction: the prediction from the network
+        - full: wheater to return all losses or only the total one
 
         returns:
-        - a single scalar for the optimizer to use
+        - a single scalar for the optimizer to use if full=False
+        - all losses if full=True
         '''
 
         # print('shape of data', minibatch_data['vertex'].shape)
         # print('shape of pred', prediction.shape)
 
-        target, mask = self._target_to_yolo(target=minibatch_data['vertex'],
-                                            n_channels=prediction.size(3),
-                                            grid_size_w=prediction.size(1),
-                                            grid_size_h=prediction.size(2))
+        # target, mask = self._target_to_yolo(target=minibatch_data['vertex'],
+        #                                     n_channels=prediction.size(3),
+        #                                     grid_size_w=prediction.size(1),
+        #                                     grid_size_h=prediction.size(2))
 
 
         original_shape = prediction.size()
@@ -668,7 +673,7 @@ class trainercore(object):
         loss_y = self._criterion_mse(p_y[mask], t_y[mask])
         loss_cls = self._criterion_ce(p_cls[mask], torch.argmax(t_cls[mask], axis=1))
 
-        loss = loss_x + loss_y + loss_obj + loss_cls
+        loss = loss_obj # + loss_x + loss_y + loss_cls
 
         # print('LOSS OBJ IS ', loss_obj)
         # print('LOSS X IS ', loss_x)
@@ -676,15 +681,18 @@ class trainercore(object):
         # print('LOSS CLS IS ', loss_cls)
         # print('LOSS IS ', loss)
 
+        if full:
+            return loss, loss_x, loss_y, loss_obj, loss_cls
+
         return loss
 
 
-    def _calculate_accuracy(self, minibatch_data, prediction, score_cut=0.5):
+    def _calculate_accuracy(self, target, prediction, score_cut=0.5):
         '''
         Calculate the accuracy.
 
         arguments:
-        - minibatch_data: the minibatch_data from larcv
+        - target: the minibatch_data from larcv
         - prediction: the prediction from the network
         - score_cut: what cut value to apply to the object confidence output
 
@@ -695,10 +703,10 @@ class trainercore(object):
         - r^2 averaged over cells with real objects
         '''
 
-        target, _ = self._target_to_yolo(target=minibatch_data['vertex'],
-                                         n_channels=prediction.size(3),
-                                         grid_size_w=prediction.size(1),
-                                         grid_size_h=prediction.size(2))
+        # target, _ = self._target_to_yolo(target=minibatch_data['vertex'],
+        #                                  n_channels=prediction.size(3),
+        #                                  grid_size_w=prediction.size(1),
+        #                                  grid_size_h=prediction.size(2))
 
         # Get the predcition and target for the object confidence
         p_obj = prediction[:,:,:,2]
@@ -719,20 +727,41 @@ class trainercore(object):
         x_targ = target[mask_targ][:,0]
         y_targ = target[mask_targ][:,1]
 
+        # print('mask_pred', (mask_pred == True).nonzero(as_tuple=True))
+        # print('mask_targ', (mask_targ == True).nonzero(as_tuple=True))
+        # print('x_pred', x_pred)
+        # print('intersection', intersection.float(), 'union', union.float(), 'iou', iou)
+
         with torch.no_grad():
             r2 = self._criterion_mse(x_pred, x_targ) + self._criterion_mse(y_pred, y_targ)
 
         return iou.item(), r2.item()
 
 
-    def _compute_metrics(self, logits, minibatch_data, loss):
+    def _compute_metrics(self, logits, vertex_data, loss, loss_x=0, loss_y=0, loss_obj=0, loss_cls=0):
+        '''
+        Computes all metrics and returns them as a dict
+
+        args:
+        - logits: prediction
+        - vertex_data: the vertex data
+        - loss: loss
+        - loss_x: loss for x prediction only
+        - loss_y: loss for y prediction only
+        - loss_obj: loss for object confidence prediction only
+        - loss_cls: loss for class prediciotn only
+        '''
 
         # Call all of the functions in the metrics dictionary:
         metrics = {}
 
         metrics['loss'] = loss.data
+        metrics['loss_x'] = loss_x.data
+        metrics['loss_y'] = loss_y.data
+        metrics['loss_obj'] = loss_obj.data
+        metrics['loss_cls'] = loss_cls.data
 
-        iou, r2 = self._calculate_accuracy(minibatch_data, logits)
+        iou, r2 = self._calculate_accuracy(vertex_data, logits)
         metrics['accuracy'] = iou
         metrics['iou'] = iou
         metrics['r2'] = r2
@@ -779,10 +808,12 @@ class trainercore(object):
 
 
 
-    def summary(self, metrics,saver=""):
+    def summary(self, metrics, saver=""):
 
         if self._saver is None:
             return
+
+
 
         if self._global_step % self.args.summary_iteration == 0:
             for metric in metrics:
@@ -918,7 +949,7 @@ class trainercore(object):
         minibatch_data = self.larcv_fetcher.fetch_next_batch("primary", force_pop = True)
         io_end_time = datetime.datetime.now()
 
-        # numpy.save('tmp', minibatch_data['image'])
+        numpy.save('img', minibatch_data['image'])
         if (numpy.all((minibatch_data['image'] == 0))):
             print('*** Image is all zeros! ***')
 
@@ -926,10 +957,20 @@ class trainercore(object):
 
         # Run a forward pass of the model on the input image:
         logits = self._net(minibatch_data['image'])
+        print('shape', logits.shape)
         # print("Completed forward pass")
 
+        print('minibatch_data[vertex]', minibatch_data['vertex'])
+        vertex_data, vertex_mask = self._target_to_yolo(target=minibatch_data['vertex'],
+                                                        n_channels=logits.size(3),
+                                                        grid_size_w=logits.size(1),
+                                                        grid_size_h=logits.size(2))
+
         # Compute the loss based on the logits
-        loss = self._calculate_loss(minibatch_data, logits)
+        loss, loss_x, loss_y, loss_obj, loss_cls = self._calculate_loss(vertex_data,
+                                                                        vertex_mask,
+                                                                        logits,
+                                                                        full=True)
         # print('loss', loss.item())
 
         # Compute the gradients for the network parameters:
@@ -940,7 +981,7 @@ class trainercore(object):
         # print('weights grad', self._net.initial_convolution.conv1.weight.grad)
 
         # Compute any necessary metrics:
-        metrics = self._compute_metrics(logits, minibatch_data, loss)
+        metrics = self._compute_metrics(logits, vertex_data, loss, loss_x, loss_y, loss_obj, loss_cls)
 
 
 

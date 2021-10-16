@@ -453,7 +453,7 @@ class YOLO(nn.Module):
         for i in range(0, self.n_core_blocks):
             x = [self.dowsample[i](_x) for _x in x]
             # print(i, 'after dowsample', x[0].size())
-            # x = [self.residual[i](_x) for _x in x]
+            x = [self.residual[i](_x) for _x in x]
             # print(i, 'after residual', x[0].size())
 
         for i in range(0, len(self.convolution_blocks_1)):
