@@ -303,6 +303,12 @@ def main():
 #     s.stop()
 
 if __name__ == '__main__':
+
+    if 'OMPI_COMM_WORLD_LOCAL_RANK' in os.environ:
+        target_gpu = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(target_gpu)
+        print('Setting CUDA_VISIBLE_DEVICES to', os.environ['CUDA_VISIBLE_DEVICES'])
+
     # main()
     s = VertexID()
     s.stop()

@@ -48,7 +48,7 @@ class larcv_fetcher(object):
 
 
 
-    def prepare_sample(self, name, input_file, batch_size, color=None, start_index = 0):
+    def prepare_sample(self, name, input_file, batch_size, color=None, start_index = 0, print_config=False):
 
         files = glob.glob(input_file)
 
@@ -118,8 +118,9 @@ class larcv_fetcher(object):
             )
             data_keys[f'label_{label_name}'] = f'label_{label_name}'
 
-        logger.debug(cb.print_config())
-        print(cb.print_config())
+
+        if print_config:
+            print(cb.print_config())
 
         # Prepare data managers:
         io_config = {
@@ -147,8 +148,8 @@ class larcv_fetcher(object):
 
 
 
-        # if self.mode == "inference":
-        self._larcv_interface.set_next_index(name, start_index)
+        if self.mode == "inference" and not self.distributed:
+            self._larcv_interface.set_next_index(name, start_index)
 
         while self._larcv_interface.is_reading(name):
             time.sleep(0.1)
@@ -196,10 +197,6 @@ class larcv_fetcher(object):
         minibatch_data = self._larcv_interface.fetch_minibatch_data(name,
             pop=pop,fetch_meta_data=metadata)
         minibatch_dims = self._larcv_interface.fetch_minibatch_dims(name)
-
-        if (numpy.all((minibatch_data['image'] == 0))):
-            print('*** Image is all zeros! ***')
-
 
 
         # print('Fetching minibatch of data', minibatch_data)

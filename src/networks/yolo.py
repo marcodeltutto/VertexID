@@ -137,8 +137,7 @@ class ResidualBlock(nn.Module):
         residual = x
 
         out = self.conv1(x)
-        if (out.isnan().any()):
-            print('nan in forward pass ----------------------------------------------------------')
+
         if self.batch_norm:
             out = self.bn1(out)
 
@@ -447,8 +446,6 @@ class YOLO(nn.Module):
         # print('initial', x[0].size())
         x = [self.initial_convolution(_x) for _x in x]
         # print('after initial_convolution', x[0].size())
-        if (torch.isnan(x[2])[0][0][0][0].item()):
-            print('nan!')
 
         for i in range(0, self.n_core_blocks):
             x = [self.dowsample[i](_x) for _x in x]

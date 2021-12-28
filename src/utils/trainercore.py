@@ -1,7 +1,7 @@
 import os
 import tempfile
 import sys
-import time
+import time, datetime
 from collections import OrderedDict
 
 import numpy
@@ -56,6 +56,7 @@ class trainercore(object):
 
         self._iteration       = 0
         self._global_step     = -1
+        self._rank            = 0
 
         self._cleanup         = []
 
@@ -84,7 +85,8 @@ class trainercore(object):
                 name            = "primary",
                 input_file      = self.args.file,
                 batch_size      = self.args.minibatch_size,
-                color           = color
+                color           = color,
+                print_config    = True if self._rank == 0 else False
             )
 
             configured_keys += ["primary",]
@@ -96,7 +98,8 @@ class trainercore(object):
                     name            = "val",
                     input_file      = self.args.aux_file,
                     batch_size      = self.args.aux_minibatch_size,
-                    color           = color
+                    color           = color,
+                    print_config    = True if self._rank == 0 else False
                 )
                 configured_keys += ["val",]
 
@@ -377,7 +380,10 @@ class trainercore(object):
                 weight_decay=self.args.weight_decay)
 
 
+        def constant_lr(step):
+            return 1.0
 
+        self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(self._opt, constant_lr, last_epoch=-1)
 
 
         device = self.get_device()
@@ -429,14 +435,17 @@ class trainercore(object):
 
     def init_saver(self):
 
+        time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        save_dir = self.args.log_directory + '/' + time_str
+
         # This sets up the summary saver:
         if self.args.training:
-            self._saver = tensorboardX.SummaryWriter(self.args.log_directory)
+            self._saver = tensorboardX.SummaryWriter(save_dir)
 
         if self.args.aux_file is not None and self.args.training:
-            self._aux_saver = tensorboardX.SummaryWriter(self.args.log_directory + "/test/")
+            self._aux_saver = tensorboardX.SummaryWriter(save_dir + "/test/")
         elif self.args.aux_file is not None and not self.args.training:
-            self._aux_saver = tensorboardX.SummaryWriter(self.args.log_directory + "/val/")
+            self._aux_saver = tensorboardX.SummaryWriter(save_dir + "/val/")
 
         else:
             self._aux_saver = None
@@ -483,6 +492,7 @@ class trainercore(object):
 
         self._net.load_state_dict(state['state_dict'])
         self._opt.load_state_dict(state['optimizer'])
+        self._lr_scheduler.load_state_dict(state['scheduler'])
         self._global_step = state['global_step']
 
         # If using GPUs, move the model to GPU:
@@ -507,6 +517,7 @@ class trainercore(object):
             'global_step' : self._global_step,
             'state_dict'  : self._net.state_dict(),
             'optimizer'   : self._opt.state_dict(),
+            'scheduler'   : self._lr_scheduler.state_dict(),
         }
 
         # Make sure the path actually exists:
@@ -701,6 +712,7 @@ class trainercore(object):
         we predict to be an object; intersection: cells where there is a real object, and we
         predict that there is an object
         - r^2 averaged over cells with real objects
+        - acc_onevtx, the accuracy if there is only one vertex
         '''
 
         # target, _ = self._target_to_yolo(target=minibatch_data['vertex'],
@@ -711,6 +723,18 @@ class trainercore(object):
         # Get the predcition and target for the object confidence
         p_obj = prediction[:,:,:,2]
         t_obj = target[:,:,:,2]
+
+        batch_size = p_obj.size(0)
+
+        #############
+        # If there is only one vertex, calculate the accuracy
+        # by taking the maximum
+        _, idx_pred = p_obj.view(batch_size, -1).max(dim=1)
+        _, idx_targ = t_obj.view(batch_size, -1).max(dim=1)
+
+        correct_prediction = torch.eq(idx_pred, idx_targ)
+        acc_onevtx = torch.mean(correct_prediction.float())
+        #############
 
         # Construct bool tensor that shows where we have or expect to have an object
         mask_pred = p_obj > score_cut
@@ -735,7 +759,7 @@ class trainercore(object):
         with torch.no_grad():
             r2 = self._criterion_mse(x_pred, x_targ) + self._criterion_mse(y_pred, y_targ)
 
-        return iou.item(), r2.item()
+        return iou, r2, acc_onevtx
 
 
     def _compute_metrics(self, logits, vertex_data, loss, loss_x=0, loss_y=0, loss_obj=0, loss_cls=0):
@@ -761,10 +785,11 @@ class trainercore(object):
         metrics['loss_obj'] = loss_obj.data
         metrics['loss_cls'] = loss_cls.data
 
-        iou, r2 = self._calculate_accuracy(vertex_data, logits)
-        metrics['accuracy'] = iou
-        metrics['iou'] = iou
-        metrics['r2'] = r2
+        iou, r2, acc_onevtx = self._calculate_accuracy(vertex_data, logits)
+        metrics['accuracy'] = iou.data
+        metrics['iou'] = iou.data
+        metrics['r2'] = r2.data
+        metrics['acc_onevtx'] = acc_onevtx.data
 
         return metrics
 
@@ -1001,6 +1026,7 @@ class trainercore(object):
         step_start_time = datetime.datetime.now()
         # Apply the parameter update:
         self._opt.step()
+        self._lr_scheduler.step()
         # print("Updated Weights")
         global_end_time = datetime.datetime.now()
 
