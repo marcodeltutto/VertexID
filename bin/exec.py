@@ -240,11 +240,11 @@ The most commonly used commands are:
             default = 0,
             help    = "Start index, only used in inference mode")
 
-        parser.add_argument('--label-mode',
-            type    = str,
-            choices = ['split', 'all'],
-            default = 'all',
-            help    = "Run with split labels (multiple classifiers) or all in one" )
+        # parser.add_argument('--label-mode',
+        #     type    = str,
+        #     choices = ['split', 'all'],
+        #     default = 'all',
+        #     help    = "Run with split labels (multiple classifiers) or all in one" )
 
         parser.add_argument('-mb','--minibatch-size',
             type    = int,
