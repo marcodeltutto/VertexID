@@ -71,8 +71,7 @@ class Block(nn.Module):
 
         # print('Block x is ', x)
         out = self.conv1(x)
-        if (torch.isnan(out)[0][0][0][0].item()):
-            print('nan')
+
         if self.batch_norm:
             out = self.bn1(out)
         out = self.activ(out)
