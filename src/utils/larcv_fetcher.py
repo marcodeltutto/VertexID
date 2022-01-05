@@ -50,10 +50,16 @@ class larcv_fetcher(object):
 
     def prepare_sample(self, name, input_file, batch_size, color=None, start_index = 0, print_config=False):
 
+        # If quotations are in the file name, remove them
+        if "\"" in input_file:
+            input_file = input_file.replace("\"", "", 2)
+
         files = glob.glob(input_file)
 
         if len(files) == 0:
             raise Exception(f"Cannot find files with pattern {input_file}.")
+
+        print(f'larcv_fetcher: {name}: using {len(files)} file(s).')
 
         # First, verify the files exist:
         for f in files:

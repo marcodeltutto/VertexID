@@ -739,7 +739,13 @@ class trainercore(object):
 
         step_start_time = datetime.datetime.now()
         # Apply the parameter update:
+        print()
+        print('before')
+        print(self._opt.state_dict)
         self._opt.step()
+        print('after')
+        print()
+        print(self._opt.state_dict)
         self._lr_scheduler.step()
         # print("Updated Weights")
         global_end_time = datetime.datetime.now()
