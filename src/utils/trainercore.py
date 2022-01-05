@@ -8,6 +8,7 @@ import numpy
 
 import torch
 from torch.autograd import Variable
+# import torchvision
 
 from larcv import queueloader
 from . import larcv_fetcher
@@ -15,7 +16,8 @@ from . import larcv_fetcher
 import datetime
 
 # This uses tensorboardX to save summaries and metrics to tensorboard compatible files.
-import tensorboardX
+# import tensorboardX
+from torch.utils.tensorboard import SummaryWriter
 
 class trainercore(object):
     '''
@@ -32,8 +34,10 @@ class trainercore(object):
         else:
             self.mode = 'iotest'
 
-        access_mode = "random_blocks" if self.mode == "training" else "serial_access"
-        # access_mode = "serial_access" if self.mode == "training" else "serial_access"
+        access_mode = "random_blocks" if self.mode == "train" else "serial_access"
+        # access_mode = "serial_access" if self.mode == "train" else "serial_access"
+
+        print("Access mode:", access_mode)
 
         self.larcv_fetcher = larcv_fetcher.larcv_fetcher(
             mode            = self.mode,
@@ -76,7 +80,7 @@ class trainercore(object):
                 input_file      = self.args.file,
                 batch_size      = self.args.minibatch_size,
                 color           = color,
-                print_config    = True if self._rank == 0 else False
+                print_config    = False # True if self._rank == 0 else False
             )
 
             configured_keys += ["primary",]
@@ -89,12 +93,14 @@ class trainercore(object):
                     input_file      = self.args.aux_file,
                     batch_size      = self.args.aux_minibatch_size,
                     color           = color,
-                    print_config    = True if self._rank == 0 else False
+                    print_config    = False # True if self._rank == 0 else False
                 )
                 configured_keys += ["val",]
 
         elif self.mode == "inference":
             pass
+
+        # exit(0)
 
         return configured_keys
 
@@ -202,10 +208,13 @@ class trainercore(object):
         self._criterion_mse = torch.nn.MSELoss()
         self._criterion_ce = torch.nn.CrossEntropyLoss()
 
-        n_empty = 48 * 32 - 1.
-        n_occupied = 1.
-        self._weight_empty = 1 / n_empty
-        self._weight_occupied = 1 - self._weight_empty
+        # n_empty = 48 * 32 - 1.
+        # n_occupied = 1.
+        # self._weight_empty = 1 / n_empty
+        # self._weight_occupied = 1 - self._weight_empty
+
+        self._lambda_noobj = 0.5
+        self._lambda_coord = 5
 
 
     def init_saver(self):
@@ -215,7 +224,8 @@ class trainercore(object):
 
         # This sets up the summary saver:
         if self.args.training:
-            self._saver = tensorboardX.SummaryWriter(save_dir)
+            # self._saver = tensorboardX.SummaryWriter(save_dir)
+            self._saver = SummaryWriter(save_dir)
 
         if self.args.aux_file is not None and self.args.training:
             self._aux_saver = tensorboardX.SummaryWriter(save_dir + "/test/")
@@ -231,8 +241,6 @@ class trainercore(object):
         '''
 
         _, checkpoint_file_path = self.get_model_filepath()
-
-        print(checkpoint_file_path)
 
         if not os.path.isfile(checkpoint_file_path):
             print("No previously saved model found.")
@@ -396,7 +404,7 @@ class trainercore(object):
 
     def _calculate_loss(self, target, mask, prediction, full=False):
         '''
-        Calculate the loss.
+        Calculates the loss.
 
         arguments:
         - target: the vertex data
@@ -408,18 +416,6 @@ class trainercore(object):
         - a single scalar for the optimizer to use if full=False
         - all losses if full=True
         '''
-
-        # print('shape of data', minibatch_data['vertex'].shape)
-        # print('shape of pred', prediction.shape)
-
-        # target, mask = self._target_to_yolo(target=minibatch_data['vertex'],
-        #                                     n_channels=prediction.size(3),
-        #                                     grid_size_w=prediction.size(1),
-        #                                     grid_size_h=prediction.size(2))
-
-
-        original_shape = prediction.size()
-        bs = original_shape[0]
 
         prediction = prediction.view(prediction.size(0), prediction.size(1)*prediction.size(2), prediction.size(3))
         target     = target.view(target.size(0), target.size(1)*target.size(2), target.size(3))
@@ -435,15 +431,10 @@ class trainercore(object):
         p_obj = prediction[:,:,2]
         p_cls = prediction[:,:,3:]
 
-        # i = 0
-        # for t,p in zip(t_obj[0], p_obj[0]):
-        #     print(i, t, p)
-        #     i += 1
-
-        loss_obj = self._weight_empty * self._criterion_mse(p_obj[~mask], t_obj[~mask]) \
-                 + self._weight_occupied * self._criterion_mse(p_obj[mask], t_obj[mask])
-        loss_x = self._criterion_mse(p_x[mask], t_x[mask])
-        loss_y = self._criterion_mse(p_y[mask], t_y[mask])
+        loss_obj = self._lambda_noobj * self._criterion_mse(p_obj[~mask], t_obj[~mask]) \
+                 + self._criterion_mse(p_obj[mask], t_obj[mask])
+        loss_x = self._lambda_coord * self._criterion_mse(p_x[mask], t_x[mask])
+        loss_y = self._lambda_coord * self._criterion_mse(p_y[mask], t_y[mask])
         loss_cls = self._criterion_ce(p_cls[mask], torch.argmax(t_cls[mask], axis=1))
 
         loss = loss_obj # + loss_x + loss_y + loss_cls
@@ -462,7 +453,7 @@ class trainercore(object):
 
     def _calculate_accuracy(self, target, prediction, score_cut=0.5):
         '''
-        Calculate the accuracy.
+        Calculates the accuracy.
 
         arguments:
         - target: the minibatch_data from larcv
@@ -477,11 +468,6 @@ class trainercore(object):
         - acc_onevtx, the accuracy if there is only one vertex
         '''
 
-        # target, _ = self._target_to_yolo(target=minibatch_data['vertex'],
-        #                                  n_channels=prediction.size(3),
-        #                                  grid_size_w=prediction.size(1),
-        #                                  grid_size_h=prediction.size(2))
-
         # Get the predcition and target for the object confidence
         p_obj = prediction[:,:,:,2]
         t_obj = target[:,:,:,2]
@@ -493,6 +479,12 @@ class trainercore(object):
         # by taking the maximum
         _, idx_pred = p_obj.view(batch_size, -1).max(dim=1)
         _, idx_targ = t_obj.view(batch_size, -1).max(dim=1)
+
+        # print()
+        # print('idx_targ', idx_targ)
+        # print()
+        # numpy.save('t_obj', t_obj.cpu().detach().numpy())
+        # numpy.save('t_obj_view', t_obj.view(batch_size, -1).cpu().detach().numpy())
 
         correct_prediction = torch.eq(idx_pred, idx_targ)
         acc_onevtx = torch.mean(correct_prediction.float())
@@ -569,10 +561,10 @@ class trainercore(object):
                 s += "it.: {}, ".format(metrics['it.'])
 
             # Build up a string for logging:
-            if self._log_keys != []:
-                s += ", ".join(["{0}: {1:.3}".format(key, metrics[key]) for key in self._log_keys])
-            else:
-                s += ", ".join(["{0}: {1:.3}".format(key, metrics[key]) for key in metrics])
+            # if self._log_keys != []:
+            #     s += ", ".join(["{0}: {1:.3}".format(key, metrics[key]) for key in self._log_keys])
+            # else:
+            s += ", ".join(["{0}: {1:.3}".format(key, metrics[key]) for key in metrics])
 
 
             try:
@@ -678,7 +670,7 @@ class trainercore(object):
         # if this is a logging step, we compute some logging metrics.
         torch.autograd.set_detect_anomaly(True)
         self._net.train()
-        # print(self._net)
+        print(self._net)
 
         global_start_time = datetime.datetime.now()
 
@@ -691,19 +683,30 @@ class trainercore(object):
         io_end_time = datetime.datetime.now()
 
         numpy.save('img', minibatch_data['image'])
+        numpy.save('vtx', minibatch_data['vertex'])
+        # print()
+        # print(minibatch_data['label_neut'])
+        # print()
 
         minibatch_data = self.to_torch(minibatch_data)
 
+        if self._global_step == 0:
+            # Save one image, as an example
+            self._saver.add_image('example_image', minibatch_data['image'][0])
+            # Save the network, so we can see a network graph in tensorboard
+            self._saver.add_graph(self._net, minibatch_data['image'])
+
         # Run a forward pass of the model on the input image:
         logits = self._net(minibatch_data['image'])
-        print('shape', logits.shape)
+        print('Output shape:', logits.shape)
         # print("Completed forward pass")
 
-        print('minibatch_data[vertex]', minibatch_data['vertex'])
+        print('True vertex position:', minibatch_data['vertex'])
         vertex_data, vertex_mask = self._target_to_yolo(target=minibatch_data['vertex'],
                                                         n_channels=logits.size(3),
                                                         grid_size_w=logits.size(1),
                                                         grid_size_h=logits.size(2))
+        print('YOLO-format vertex:', vertex_data.shape, vertex_mask.shape)
 
         # Compute the loss based on the logits
         loss, loss_x, loss_y, loss_obj, loss_cls = self._calculate_loss(vertex_data,
