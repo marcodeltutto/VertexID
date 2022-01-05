@@ -113,10 +113,10 @@ class larcv_fetcher(object):
             cb.add_batch_filler(
                 datatype     = "particle",
                 producer     = f"{label_name}ID",
-                name         = f'label_{label_name}',
+                name         = name+f'label_{label_name}',
                 PdgClassList = [i for i in range(l)]
             )
-            data_keys[f'label_{label_name}'] = f'label_{label_name}'
+            data_keys[f'label_{label_name}'] = name+f'label_{label_name}'
 
 
         if print_config:
