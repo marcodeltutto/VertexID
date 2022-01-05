@@ -100,8 +100,6 @@ class trainercore(object):
         elif self.mode == "inference":
             pass
 
-        # exit(0)
-
         return configured_keys
 
 
@@ -224,13 +222,12 @@ class trainercore(object):
 
         # This sets up the summary saver:
         if self.args.training:
-            # self._saver = tensorboardX.SummaryWriter(save_dir)
             self._saver = SummaryWriter(save_dir)
 
         if self.args.aux_file is not None and self.args.training:
-            self._aux_saver = tensorboardX.SummaryWriter(save_dir + "/test/")
+            self._aux_saver = SummaryWriter(save_dir + "/test/")
         elif self.args.aux_file is not None and not self.args.training:
-            self._aux_saver = tensorboardX.SummaryWriter(save_dir + "/val/")
+            self._aux_saver = SummaryWriter(save_dir + "/val/")
 
         else:
             self._aux_saver = None
@@ -670,7 +667,7 @@ class trainercore(object):
         # if this is a logging step, we compute some logging metrics.
         torch.autograd.set_detect_anomaly(True)
         self._net.train()
-        print(self._net)
+        # print(self._net)
 
         global_start_time = datetime.datetime.now()
 
@@ -796,11 +793,20 @@ class trainercore(object):
                 # Run a forward pass of the model on the input image:
                 logits = self._net(minibatch_data['image'])
 
+                # Convert target to yolo format
+                vertex_data, vertex_mask = self._target_to_yolo(target=minibatch_data['vertex'],
+                                                                n_channels=logits.size(3),
+                                                                grid_size_w=logits.size(1),
+                                                                grid_size_h=logits.size(2))
+
                 # Compute the loss
-                loss = self._calculate_loss(minibatch_data, logits)
+                loss, loss_x, loss_y, loss_obj, loss_cls = self._calculate_loss(vertex_data,
+                                                                                vertex_mask,
+                                                                                logits,
+                                                                                full=True)
 
                 # Compute the metrics for this iteration:
-                metrics = self._compute_metrics(logits, minibatch_data, loss)
+                metrics = self._compute_metrics(logits, vertex_data, loss, loss_x, loss_y, loss_obj, loss_cls)
 
                 self.log(metrics, saver="test")
                 self.summary(metrics, saver="test")
