@@ -32,10 +32,10 @@ class larcv_fetcher(object):
             self._larcv_interface = queueloader.queue_interface(
                 random_access_mode=access_mode, seed=seed)
 
-        self.mode            = mode
-        self.image_mode      = data_format
-        self.input_dimension = dimension
-        self.distributed     = distributed
+        self.mode              = mode
+        self.image_mode        = data_format
+        self.input_dimension   = dimension
+        self.distributed       = distributed
         self.downsample_images = downsample_images
 
 
@@ -76,6 +76,20 @@ class larcv_fetcher(object):
         # Build up the data_keys:
         data_keys = {}
         data_keys['image'] = name+'data'
+
+        # Downsampling
+        if self.downsample_images != 0:
+            print("Adding Downsample process")
+            cb.add_preprocess(
+                datatype = "sparse2d",
+                Product = "sparse2d",
+                producer = "dunevoxels",
+                process  = "Downsample",
+                OutputProducer = "dunevoxels",
+                Downsample = 2**self.downsample_images,
+                PoolType = 1 # average,
+                # PoolType = 2 # max
+            )
 
 
         # Need to load up on data fillers.
@@ -203,10 +217,6 @@ class larcv_fetcher(object):
         minibatch_data = self._larcv_interface.fetch_minibatch_data(name,
             pop=pop,fetch_meta_data=metadata)
         minibatch_dims = self._larcv_interface.fetch_minibatch_dims(name)
-
-
-        # print('Fetching minibatch of data', minibatch_data)
-
 
 
         # This brings up the next data to current data

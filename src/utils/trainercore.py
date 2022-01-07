@@ -40,13 +40,16 @@ class trainercore(object):
         print("Access mode:", access_mode)
 
         self.larcv_fetcher = larcv_fetcher.larcv_fetcher(
-            mode            = self.mode,
-            distributed     = self.args.distributed,
-            access_mode     = access_mode,
-            dimension       = self.args.input_dimension,
-            data_format     = self.args.image_mode,
+            mode              = self.mode,
+            distributed       = self.args.distributed,
+            access_mode       = access_mode,
+            dimension         = self.args.input_dimension,
+            data_format       = self.args.image_mode,
             downsample_images = self.args.downsample_images,
         )
+
+        self.args.image_width = int(self.args.image_width / 2**self.args.downsample_images)
+        self.args.image_height = int(self.args.image_height / 2**self.args.downsample_images)
 
         self._iteration       = 0
         self._global_step     = -1
@@ -80,7 +83,7 @@ class trainercore(object):
                 input_file      = self.args.file,
                 batch_size      = self.args.minibatch_size,
                 color           = color,
-                print_config    = False # True if self._rank == 0 else False
+                print_config    = True if self._rank == 0 else False
             )
 
             configured_keys += ["primary",]
@@ -362,9 +365,9 @@ class trainercore(object):
         - a mask that can mask the entries where there are real objects
         '''
         print('target is ', target)
-        pitch = 0.4
-        padding_x = 286
-        padding_y = 124
+        pitch = 0.4 * 2**self.args.downsample_images
+        padding_x = 286 / 2**self.args.downsample_images
+        padding_y = 124 / 2**self.args.downsample_images
 
         batch_size = target.size(0)
 
@@ -384,6 +387,9 @@ class trainercore(object):
             t_i = int(t_x)
             t_y = (target[batch_id, 0]/pitch + padding_y/2) / step_h
             t_j = int(t_y)
+
+            print('target[batch_id, 2]', target[batch_id, 2])
+            print((target[batch_id, 2]/pitch + padding_x/2) / step_w)
 
             target_out[batch_id, t_i, t_j, 0] = t_x - t_i
             target_out[batch_id, t_i, t_j, 1] = t_y - t_j
@@ -676,7 +682,7 @@ class trainercore(object):
 
         # Fetch the next batch of data with larcv
         io_start_time = datetime.datetime.now()
-        minibatch_data = self.larcv_fetcher.fetch_next_batch("primary", force_pop = True)
+        minibatch_data = self.larcv_fetcher.fetch_next_batch("primary", force_pop=True)
         io_end_time = datetime.datetime.now()
 
         numpy.save('img', minibatch_data['image'])
@@ -695,15 +701,14 @@ class trainercore(object):
 
         # Run a forward pass of the model on the input image:
         logits = self._net(minibatch_data['image'])
-        print('Output shape:', logits.shape)
         # print("Completed forward pass")
+        print('Output shape', logits.shape)
 
         print('True vertex position:', minibatch_data['vertex'])
         vertex_data, vertex_mask = self._target_to_yolo(target=minibatch_data['vertex'],
                                                         n_channels=logits.size(3),
                                                         grid_size_w=logits.size(1),
                                                         grid_size_h=logits.size(2))
-        print('YOLO-format vertex:', vertex_data.shape, vertex_mask.shape)
 
         # Compute the loss based on the logits
         loss, loss_x, loss_y, loss_obj, loss_cls = self._calculate_loss(vertex_data,
@@ -739,13 +744,7 @@ class trainercore(object):
 
         step_start_time = datetime.datetime.now()
         # Apply the parameter update:
-        print()
-        print('before')
-        print(self._opt.state_dict)
         self._opt.step()
-        print('after')
-        print()
-        print(self._opt.state_dict)
         self._lr_scheduler.step()
         # print("Updated Weights")
         global_end_time = datetime.datetime.now()
