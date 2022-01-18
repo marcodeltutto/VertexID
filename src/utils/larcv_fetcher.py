@@ -79,7 +79,6 @@ class larcv_fetcher(object):
 
         # Downsampling
         if self.downsample_images != 0:
-            print("Adding Downsample process")
             cb.add_preprocess(
                 datatype = "sparse2d",
                 Product = "sparse2d",

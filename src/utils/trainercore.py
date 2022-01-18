@@ -83,7 +83,7 @@ class trainercore(object):
                 input_file      = self.args.file,
                 batch_size      = self.args.minibatch_size,
                 color           = color,
-                print_config    = True if self._rank == 0 else False
+                print_config    = False # True if self._rank == 0 else False
             )
 
             configured_keys += ["primary",]
@@ -108,21 +108,19 @@ class trainercore(object):
 
     def init_network(self):
 
-        # This sets up the necessary output shape:
-        output_shape = self.larcv_fetcher.output_shape('primary')
+        # This sets up the necessary input shape:
         input_shape = self.larcv_fetcher.input_shape('primary')
 
-        print('OVERRIDING input_shape, remember to fix this once you have a proper file!', input_shape)
+        # Override the shape as we are going to use dense images
         input_shape = [input_shape[0], self.args.image_width, self.args.image_height]
 
         print('Input shape:', input_shape)
-        print('Output shape:', output_shape)
 
         # To initialize the network, we see what the name is
         # and act on that:
         if self.args.network == "yolo":
             from src.networks import yolo
-            self._net = yolo.YOLO(input_shape, output_shape, self.args)
+            self._net = yolo.YOLO(input_shape, self.args)
         else:
             raise Exception(f"Couldn't identify network {self.args.network.name}")
 
@@ -226,6 +224,7 @@ class trainercore(object):
         # This sets up the summary saver:
         if self.args.training:
             self._saver = SummaryWriter(save_dir)
+
 
         if self.args.aux_file is not None and self.args.training:
             self._aux_saver = SummaryWriter(save_dir + "/test/")
@@ -364,7 +363,7 @@ class trainercore(object):
         - the transformed target
         - a mask that can mask the entries where there are real objects
         '''
-        print('target is ', target)
+        # print('True vertex position:', target)
         pitch = 0.4 * 2**self.args.downsample_images
         padding_x = 286 / 2**self.args.downsample_images
         padding_y = 124 / 2**self.args.downsample_images
@@ -388,9 +387,6 @@ class trainercore(object):
             t_y = (target[batch_id, 0]/pitch + padding_y/2) / step_h
             t_j = int(t_y)
 
-            print('target[batch_id, 2]', target[batch_id, 2])
-            print((target[batch_id, 2]/pitch + padding_x/2) / step_w)
-
             target_out[batch_id, t_i, t_j, 0] = t_x - t_i
             target_out[batch_id, t_i, t_j, 1] = t_y - t_j
             target_out[batch_id, t_i, t_j, 2] = 1.
@@ -398,7 +394,7 @@ class trainercore(object):
 
             mask[batch_id, t_i, t_j] = 1
 
-            print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
+            # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
 
         # print('target_out', target_out)
         numpy.save('yolo_tgt', target_out.cpu())
@@ -693,7 +689,7 @@ class trainercore(object):
 
         minibatch_data = self.to_torch(minibatch_data)
 
-        if self._global_step == 0:
+        if self._global_step == 0 and self._rank == 0:
             # Save one image, as an example
             self._saver.add_image('example_image', minibatch_data['image'][0])
             # Save the network, so we can see a network graph in tensorboard
@@ -702,9 +698,8 @@ class trainercore(object):
         # Run a forward pass of the model on the input image:
         logits = self._net(minibatch_data['image'])
         # print("Completed forward pass")
-        print('Output shape', logits.shape)
+        # print('Output shape', logits.shape)
 
-        print('True vertex position:', minibatch_data['vertex'])
         vertex_data, vertex_mask = self._target_to_yolo(target=minibatch_data['vertex'],
                                                         n_channels=logits.size(3),
                                                         grid_size_w=logits.size(1),

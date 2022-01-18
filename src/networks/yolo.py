@@ -314,7 +314,7 @@ def filter_increase(n_filters):
 
 class YOLO(nn.Module):
 
-    def __init__(self, input_shape, output_shape, args=None):
+    def __init__(self, input_shape, args=None):
         torch.nn.Module.__init__(self)
         # All of the parameters are controlled via the args module
 
@@ -322,7 +322,6 @@ class YOLO(nn.Module):
         # self.label_mode = args.label_mode
 
         self.input_shape = input_shape
-        self.output_shape = output_shape
         self.anchors = args.yolo_anchors
         self.num_classes = args.yolo_num_classes
 

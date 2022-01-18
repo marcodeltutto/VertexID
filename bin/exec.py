@@ -305,8 +305,12 @@ def main():
 if __name__ == '__main__':
 
     if 'OMPI_COMM_WORLD_LOCAL_RANK' in os.environ:
+
+        # nodefile = os.environ['COBALT_NODEFILE']
+        # n_nodes = len(open(nodefile, "r").read().split())
+
         target_gpu = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
-        os.environ['CUDA_VISIBLE_DEVICES'] = str(target_gpu)
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(target_gpu % 8)
         print('Setting CUDA_VISIBLE_DEVICES to', os.environ['CUDA_VISIBLE_DEVICES'])
 
     # main()
