@@ -436,7 +436,7 @@ class trainercore(object):
         loss_y = self._lambda_coord * self._criterion_mse(p_y[mask], t_y[mask])
         loss_cls = self._criterion_ce(p_cls[mask], torch.argmax(t_cls[mask], axis=1))
 
-        loss = loss_obj # + loss_x + loss_y + loss_cls
+        loss = loss_obj + loss_x + loss_y # + loss_cls
 
         # print('LOSS OBJ IS ', loss_obj)
         # print('LOSS X IS ', loss_x)
@@ -479,12 +479,6 @@ class trainercore(object):
         _, idx_pred = p_obj.view(batch_size, -1).max(dim=1)
         _, idx_targ = t_obj.view(batch_size, -1).max(dim=1)
 
-        # print()
-        # print('idx_targ', idx_targ)
-        # print()
-        # numpy.save('t_obj', t_obj.cpu().detach().numpy())
-        # numpy.save('t_obj_view', t_obj.view(batch_size, -1).cpu().detach().numpy())
-
         correct_prediction = torch.eq(idx_pred, idx_targ)
         acc_onevtx = torch.mean(correct_prediction.float())
         #############
@@ -504,10 +498,8 @@ class trainercore(object):
         x_targ = target[mask_targ][:,0]
         y_targ = target[mask_targ][:,1]
 
-        # print('mask_pred', (mask_pred == True).nonzero(as_tuple=True))
-        # print('mask_targ', (mask_targ == True).nonzero(as_tuple=True))
-        # print('x_pred', x_pred)
-        # print('intersection', intersection.float(), 'union', union.float(), 'iou', iou)
+        # numpy.save('xypred', numpy.array([x_pred.cpu().float(), y_pred.cpu().float()]))
+        # numpy.save('xytarg', numpy.array([x_targ.cpu().float(), y_targ.cpu().float()]))
 
         with torch.no_grad():
             r2 = self._criterion_mse(x_pred, x_targ) + self._criterion_mse(y_pred, y_targ)
@@ -683,9 +675,6 @@ class trainercore(object):
 
         numpy.save('img', minibatch_data['image'])
         numpy.save('vtx', minibatch_data['vertex'])
-        # print()
-        # print(minibatch_data['label_neut'])
-        # print()
 
         minibatch_data = self.to_torch(minibatch_data)
 
