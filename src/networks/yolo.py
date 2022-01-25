@@ -459,9 +459,7 @@ class YOLO(nn.Module):
         x = [self.yololayer_1(_x) for _x in x]
         # print('after yolo_1', x[0].size())
 
-
-        # Doing only plane 2, should be changed later
-        return x[2]
+        return x
 
 
 

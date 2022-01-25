@@ -348,7 +348,8 @@ class trainercore(object):
         return name, checkpoint_file_path
 
 
-    def _target_to_yolo(self, target, n_channels=5, grid_size_w=56, grid_size_h=40):
+    # def _target_to_yolo(self, target, n_channels=5, grid_size_w=56, grid_size_h=40):
+    def _target_to_yolo(self, target, logits):
         '''
         Takes the vertex data from larcv and transforms it
         to YOLO output.
@@ -364,40 +365,56 @@ class trainercore(object):
         - a mask that can mask the entries where there are real objects
         '''
         # print('True vertex position:', target)
+
+        target_out = []
+        mask = []
+
         pitch = 0.4 * 2**self.args.downsample_images
         padding_x = 286 / 2**self.args.downsample_images
         padding_y = 124 / 2**self.args.downsample_images
 
         batch_size = target.size(0)
 
-        target_out = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels, device=self.get_device())
-        mask = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool, device=self.get_device())
+        for plane in range(len(logits)):
 
-        step_w = self.args.image_width / grid_size_w
-        step_h = self.args.image_height / grid_size_h
+            logits_p = logits[plane]
 
-        # print('vertex x', target[0, 2], 'y', target[0, 0])
-        # print('vertex x', (target[0, 2]/pitch + padding_x/2), 'y', (target[0, 0]/pitch + padding_y/2))
-        # print('step_w', step_w, 'step_h', step_h)
+            n_channels = logits_p.size(3)
+            grid_size_w = logits_p.size(1)
+            grid_size_h = logits_p.size(2)
+
+            target_out_p = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels, device=self.get_device())
+            mask_p = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool, device=self.get_device())
+
+            step_w = self.args.image_width / grid_size_w
+            step_h = self.args.image_height / grid_size_h
+
+            # print('vertex x', target[0, 2], 'y', target[0, 0])
+            # print('vertex x', (target[0, 2]/pitch + padding_x/2), 'y', (target[0, 0]/pitch + padding_y/2))
+            # print('step_w', step_w, 'step_h', step_h)
 
 
-        for batch_id in range(batch_size):
-            t_x = (target[batch_id, 2]/pitch + padding_x/2) / step_w
-            t_i = int(t_x)
-            t_y = (target[batch_id, 0]/pitch + padding_y/2) / step_h
-            t_j = int(t_y)
+            for batch_id in range(batch_size):
+                t_x = (target[batch_id, 2]/pitch + padding_x/2) / step_w
+                t_i = int(t_x)
+                t_y = (target[batch_id, 0]/pitch + padding_y/2) / step_h
+                t_j = int(t_y)
 
-            target_out[batch_id, t_i, t_j, 0] = t_x - t_i
-            target_out[batch_id, t_i, t_j, 1] = t_y - t_j
-            target_out[batch_id, t_i, t_j, 2] = 1.
-            target_out[batch_id, t_i, t_j, 3] = 1.
+                target_out_p[batch_id, t_i, t_j, 0] = t_x - t_i
+                target_out_p[batch_id, t_i, t_j, 1] = t_y - t_j
+                target_out_p[batch_id, t_i, t_j, 2] = 1.
+                target_out_p[batch_id, t_i, t_j, 3] = 1.
 
-            mask[batch_id, t_i, t_j] = 1
+                mask_p[batch_id, t_i, t_j] = 1
 
-            # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
+                # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
 
-        # print('target_out', target_out)
-        numpy.save('yolo_tgt', target_out.cpu())
+            # print('target_out_p', target_out_p)
+            numpy.save('yolo_tgt', target_out_p.cpu())
+
+            target_out.append(target_out_p)
+            mask.append(mask_p)
+
         return target_out, mask
 
 
@@ -414,6 +431,40 @@ class trainercore(object):
         returns:
         - a single scalar for the optimizer to use if full=False
         - all losses if full=True
+        '''
+        loss = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+        loss_x = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+        loss_y = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+        loss_obj = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+        loss_cls = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+
+        for i, (t, m, p) in enumerate(zip(target, mask, prediction)):
+            if i != 2: continue
+            l, x, y, obj, c = self._calculate_loss_per_plane(t, m, p)
+            loss = loss + l
+            loss_x = loss + x
+            loss_y = loss + y
+            loss_obj = loss + obj
+            loss_cls = loss + c
+
+        if full:
+            return loss, loss_x, loss_y, loss_obj, loss_cls
+
+        return loss
+
+
+
+    def _calculate_loss_per_plane(self, target, mask, prediction):
+        '''
+        Calculates the loss.
+
+        arguments:
+        - target: the vertex data
+        - mask: a mask indicating where the true vertices are
+        - prediction: the prediction from the network
+
+        returns:
+        - all losses
         '''
 
         prediction = prediction.view(prediction.size(0), prediction.size(1)*prediction.size(2), prediction.size(3))
@@ -438,16 +489,8 @@ class trainercore(object):
 
         loss = loss_obj + loss_x + loss_y # + loss_cls
 
-        # print('LOSS OBJ IS ', loss_obj)
-        # print('LOSS X IS ', loss_x)
-        # print('LOSS Y IS ', loss_y)
-        # print('LOSS CLS IS ', loss_cls)
-        # print('LOSS IS ', loss)
+        return loss, loss_x, loss_y, loss_obj, loss_cls
 
-        if full:
-            return loss, loss_x, loss_y, loss_obj, loss_cls
-
-        return loss
 
 
     def _calculate_accuracy(self, target, prediction, score_cut=0.5):
@@ -690,9 +733,10 @@ class trainercore(object):
         # print('Output shape', logits.shape)
 
         vertex_data, vertex_mask = self._target_to_yolo(target=minibatch_data['vertex'],
-                                                        n_channels=logits.size(3),
-                                                        grid_size_w=logits.size(1),
-                                                        grid_size_h=logits.size(2))
+                                                        logits=logits)
+                                                        # n_channels=logits.size(3),
+                                                        # grid_size_w=logits.size(1),
+                                                        # grid_size_h=logits.size(2))
 
         # Compute the loss based on the logits
         loss, loss_x, loss_y, loss_obj, loss_cls = self._calculate_loss(vertex_data,
@@ -709,7 +753,7 @@ class trainercore(object):
         # print('weights grad', self._net.initial_convolution.conv1.weight.grad)
 
         # Compute any necessary metrics:
-        metrics = self._compute_metrics(logits, vertex_data, loss, loss_x, loss_y, loss_obj, loss_cls)
+        metrics = self._compute_metrics(logits[2], vertex_data[2], loss, loss_x, loss_y, loss_obj, loss_cls)
 
 
 
@@ -784,9 +828,10 @@ class trainercore(object):
 
                 # Convert target to yolo format
                 vertex_data, vertex_mask = self._target_to_yolo(target=minibatch_data['vertex'],
-                                                                n_channels=logits.size(3),
-                                                                grid_size_w=logits.size(1),
-                                                                grid_size_h=logits.size(2))
+                                                                logits=logits)
+                                                                # n_channels=logits.size(3),
+                                                                # grid_size_w=logits.size(1),
+                                                                # grid_size_h=logits.size(2))
 
                 # Compute the loss
                 loss, loss_x, loss_y, loss_obj, loss_cls = self._calculate_loss(vertex_data,
