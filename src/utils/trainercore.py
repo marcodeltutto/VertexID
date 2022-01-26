@@ -348,7 +348,42 @@ class trainercore(object):
         return name, checkpoint_file_path
 
 
-    # def _target_to_yolo(self, target, n_channels=5, grid_size_w=56, grid_size_h=40):
+
+    def _3d_to_2d(self, point, plane, pitch=0.4):
+        '''
+        Returns the y coordinate of a 3D point projected to 2D
+        '''
+
+        z_min = 0 # cm
+        z_max = 500 # cm
+        y_min = -100 # cm
+        y_max = 100 # cm
+
+        dim_x = 1536
+        dim_y = 1024
+
+        plane_to_theta = {0: 35.7, 1: -35.7, 2: 0}
+        theta = plane_to_theta[plane]
+
+        cos_theta = numpy.cos(numpy.deg2rad(theta))
+        sin_theta = numpy.sin(numpy.deg2rad(theta))
+
+        projected = cos_theta * point[2] + sin_theta * point[1]
+
+        if theta > 0:
+            minimum = cos_theta * z_min + sin_theta * y_min
+            maximum = cos_theta * z_max + sin_theta * y_max
+        else:
+            minimum = cos_theta * z_min + sin_theta * y_max
+            maximum = cos_theta * z_max + sin_theta * y_min
+
+        padding = dim_x - (maximum - minimum) / pitch
+        offset = abs(minimum / pitch)
+        # print('min', minimum, 'max', maximum, 'offset', offset, 'padding', padding)
+
+        return projected / pitch, padding, offset
+
+
     def _target_to_yolo(self, target, logits):
         '''
         Takes the vertex data from larcv and transforms it
@@ -395,10 +430,19 @@ class trainercore(object):
 
 
             for batch_id in range(batch_size):
-                t_x = (target[batch_id, 2]/pitch + padding_x/2) / step_w
+
+                projected_x, padding, offset = self._3d_to_2d(target[batch_id, :], plane, pitch)
+                projected_y = target[batch_id, 0]/pitch # common to all planes
+
+                t_x = (projected_x + offset + padding/2) / step_w
                 t_i = int(t_x)
-                t_y = (target[batch_id, 0]/pitch + padding_y/2) / step_h
+                t_y = (projected_y + padding_y/2) / step_h
                 t_j = int(t_y)
+
+                # t_x = (target[batch_id, 2]/pitch + padding_x/2) / step_w
+                # t_i = int(t_x)
+                # t_y = (target[batch_id, 0]/pitch + padding_y/2) / step_h
+                # t_j = int(t_y)
 
                 target_out_p[batch_id, t_i, t_j, 0] = t_x - t_i
                 target_out_p[batch_id, t_i, t_j, 1] = t_y - t_j
@@ -410,7 +454,7 @@ class trainercore(object):
                 # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
 
             # print('target_out_p', target_out_p)
-            numpy.save('yolo_tgt', target_out_p.cpu())
+            numpy.save(f'yolo_tgt_{plane}', target_out_p.cpu())
 
             target_out.append(target_out_p)
             mask.append(mask_p)
@@ -432,23 +476,27 @@ class trainercore(object):
         - a single scalar for the optimizer to use if full=False
         - all losses if full=True
         '''
-        loss = torch.tensor(0.0, requires_grad=True, device=self.get_device())
-        loss_x = torch.tensor(0.0, requires_grad=True, device=self.get_device())
-        loss_y = torch.tensor(0.0, requires_grad=True, device=self.get_device())
-        loss_obj = torch.tensor(0.0, requires_grad=True, device=self.get_device())
-        loss_cls = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+        loss     = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+        # loss_x   = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+        # loss_y   = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+        # loss_obj = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+        # loss_cls = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+
+        plane_to_losses = {}
 
         for i, (t, m, p) in enumerate(zip(target, mask, prediction)):
-            if i != 2: continue
-            l, x, y, obj, c = self._calculate_loss_per_plane(t, m, p)
+            # if i != 2: continue
+            l, x, y, o, c = self._calculate_loss_per_plane(t, m, p)
             loss = loss + l
-            loss_x = loss + x
-            loss_y = loss + y
-            loss_obj = loss + obj
-            loss_cls = loss + c
+
+            plane_to_losses[i] = [l, x, y, o, c]
+            # loss_x = loss + x
+            # loss_y = loss + y
+            # loss_obj = loss + obj
+            # loss_cls = loss + c
 
         if full:
-            return loss, loss_x, loss_y, loss_obj, loss_cls
+            return loss, plane_to_losses
 
         return loss
 
@@ -510,7 +558,33 @@ class trainercore(object):
         - acc_onevtx, the accuracy if there is only one vertex
         '''
 
-        # Get the predcition and target for the object confidence
+        plane_to_accuracies = {}
+
+        for i, (t, p) in enumerate(zip(target, prediction)):
+            iou, r2, acc_onevtx = self._calculate_accuracy_per_plane(t, p)
+            plane_to_accuracies[i] = [iou, r2, acc_onevtx]
+
+        return plane_to_accuracies
+
+
+    def _calculate_accuracy_per_plane(self, target, prediction, score_cut=0.5):
+        '''
+        Calculates the accuracy on a single plane
+
+        arguments:
+        - target: the minibatch_data from larcv
+        - prediction: the prediction from the network
+        - score_cut: what cut value to apply to the object confidence output
+
+        returns:
+        - iou: intersection over union (union: all cells where we have a real object or where
+        we predict to be an object; intersection: cells where there is a real object, and we
+        predict that there is an object
+        - r^2 averaged over cells with real objects
+        - acc_onevtx, the accuracy if there is only one vertex
+        '''
+
+        # Get the prediction and target for the object confidence
         p_obj = prediction[:,:,:,2]
         t_obj = target[:,:,:,2]
 
@@ -541,8 +615,8 @@ class trainercore(object):
         x_targ = target[mask_targ][:,0]
         y_targ = target[mask_targ][:,1]
 
-        # numpy.save('xypred', numpy.array([x_pred.cpu().float(), y_pred.cpu().float()]))
-        # numpy.save('xytarg', numpy.array([x_targ.cpu().float(), y_targ.cpu().float()]))
+        numpy.save('xypred', numpy.array([x_pred.cpu().float(), y_pred.cpu().float()]))
+        numpy.save('xytarg', numpy.array([x_targ.cpu().float(), y_targ.cpu().float()]))
 
         with torch.no_grad():
             r2 = self._criterion_mse(x_pred, x_targ) + self._criterion_mse(y_pred, y_targ)
@@ -550,34 +624,37 @@ class trainercore(object):
         return iou, r2, acc_onevtx
 
 
-    def _compute_metrics(self, logits, vertex_data, loss, loss_x=0, loss_y=0, loss_obj=0, loss_cls=0):
+    def _compute_metrics(self, logits, vertex_data, loss, plane_to_losses):
         '''
         Computes all metrics and returns them as a dict
 
         args:
-        - logits: prediction
-        - vertex_data: the vertex data
+        - logits: prediction (list, one entry for each plane)
+        - vertex_data: the vertex data (list, one ontry for each plane)
         - loss: loss
-        - loss_x: loss for x prediction only
-        - loss_y: loss for y prediction only
-        - loss_obj: loss for object confidence prediction only
-        - loss_cls: loss for class prediciotn only
+        - plane_to_losses: dict: plane id -> list of losses (x, y, obj, cls)
         '''
 
         # Call all of the functions in the metrics dictionary:
         metrics = {}
 
+        # Add the total loss
         metrics['loss'] = loss.data
-        metrics['loss_x'] = loss_x.data
-        metrics['loss_y'] = loss_y.data
-        metrics['loss_obj'] = loss_obj.data
-        metrics['loss_cls'] = loss_cls.data
 
-        iou, r2, acc_onevtx = self._calculate_accuracy(vertex_data, logits)
-        metrics['accuracy'] = iou.data
-        metrics['iou'] = iou.data
-        metrics['r2'] = r2.data
-        metrics['acc_onevtx'] = acc_onevtx.data
+        # Add the losses per plane p and per loss category
+        for p in [0, 1, 2]:
+            metrics[f'loss_p{p}_x'] = plane_to_losses[p][0].data
+            metrics[f'loss_p{p}_y'] = plane_to_losses[p][1].data
+            metrics[f'loss_p{p}_obj'] = plane_to_losses[p][2].data
+            metrics[f'loss_p{p}_cls'] = plane_to_losses[p][3].data
+
+        # Add the accuracies per plane
+        plane_to_accuracies = self._calculate_accuracy(vertex_data, logits)
+        for p in [0, 1, 2]:
+            metrics[f'accuracy_p{p}'] = plane_to_accuracies[p][0].data
+            metrics[f'iou_p{p}'] = plane_to_accuracies[p][0]
+            metrics[f'r2_p{p}'] = plane_to_accuracies[p][1]
+            metrics[f'acc_onevtx_p{p}'] = plane_to_accuracies[p][2]
 
         return metrics
 
@@ -739,10 +816,10 @@ class trainercore(object):
                                                         # grid_size_h=logits.size(2))
 
         # Compute the loss based on the logits
-        loss, loss_x, loss_y, loss_obj, loss_cls = self._calculate_loss(vertex_data,
-                                                                        vertex_mask,
-                                                                        logits,
-                                                                        full=True)
+        loss, plane_to_losses = self._calculate_loss(vertex_data,
+                                                     vertex_mask,
+                                                     logits,
+                                                     full=True)
         # print('loss', loss.item())
 
         # Compute the gradients for the network parameters:
@@ -753,7 +830,7 @@ class trainercore(object):
         # print('weights grad', self._net.initial_convolution.conv1.weight.grad)
 
         # Compute any necessary metrics:
-        metrics = self._compute_metrics(logits[2], vertex_data[2], loss, loss_x, loss_y, loss_obj, loss_cls)
+        metrics = self._compute_metrics(logits, vertex_data, loss, plane_to_losses)
 
 
 
@@ -834,13 +911,13 @@ class trainercore(object):
                                                                 # grid_size_h=logits.size(2))
 
                 # Compute the loss
-                loss, loss_x, loss_y, loss_obj, loss_cls = self._calculate_loss(vertex_data,
-                                                                                vertex_mask,
-                                                                                logits,
-                                                                                full=True)
+                loss, plane_to_losses = self._calculate_loss(vertex_data,
+                                                             vertex_mask,
+                                                             logits,
+                                                             full=True)
 
                 # Compute the metrics for this iteration:
-                metrics = self._compute_metrics(logits, vertex_data, loss, loss_x, loss_y, loss_obj, loss_cls)
+                metrics = self._compute_metrics(logits, vertex_data, loss, plane_to_losses)
 
                 self.log(metrics, saver="test")
                 self.summary(metrics, saver="test")
