@@ -359,8 +359,8 @@ class trainercore(object):
         y_min = -100 # cm
         y_max = 100 # cm
 
-        dim_x = 1536
-        dim_y = 1024
+        dim_x = 1536 / 2**self.args.downsample_images
+        dim_y = 1024 / 2**self.args.downsample_images
 
         plane_to_theta = {0: 35.7, 1: -35.7, 2: 0}
         theta = plane_to_theta[plane]
@@ -418,6 +418,9 @@ class trainercore(object):
             grid_size_w = logits_p.size(1)
             grid_size_h = logits_p.size(2)
 
+            print('plane', plane, 'grid_size_w', grid_size_w, 'grid_size_h', grid_size_h)
+            print('logits shape', logits_p.shape)
+
             target_out_p = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels, device=self.get_device())
             mask_p = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool, device=self.get_device())
 
@@ -432,7 +435,7 @@ class trainercore(object):
             for batch_id in range(batch_size):
 
                 projected_x, padding, offset = self._3d_to_2d(target[batch_id, :], plane, pitch)
-                projected_y = target[batch_id, 0]/pitch # common to all planes
+                projected_y = target[batch_id, 0] / pitch # common to all planes
 
                 t_x = (projected_x + offset + padding/2) / step_w
                 t_i = int(t_x)
