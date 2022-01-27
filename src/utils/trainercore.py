@@ -564,8 +564,8 @@ class trainercore(object):
         plane_to_accuracies = {}
 
         for i, (t, p) in enumerate(zip(target, prediction)):
-            iou, r2, acc_onevtx = self._calculate_accuracy_per_plane(t, p)
-            plane_to_accuracies[i] = [iou, r2, acc_onevtx]
+            iou, r2, resolution, acc_onevtx = self._calculate_accuracy_per_plane(t, p)
+            plane_to_accuracies[i] = [iou, r2, resolution, acc_onevtx]
 
         return plane_to_accuracies
 
@@ -621,10 +621,21 @@ class trainercore(object):
         numpy.save('xypred', numpy.array([x_pred.cpu().float(), y_pred.cpu().float()]))
         numpy.save('xytarg', numpy.array([x_targ.cpu().float(), y_targ.cpu().float()]))
 
+        grid_size_w = prediction.size(1)
+        grid_size_h = prediction.size(2)
+        pitch = 0.4 # cm
+        a = 1536 / grid_size_w * pitch
+        b = 1024 / grid_size_h * pitch
+        resolution = 0
+
         with torch.no_grad():
             r2 = self._criterion_mse(x_pred, x_targ) + self._criterion_mse(y_pred, y_targ)
+            resolution += a * a * self._criterion_mse(x_pred, x_targ)
+            resolution += b * b * self._criterion_mse(y_pred, y_targ)
 
-        return iou, r2, acc_onevtx
+        resolution = torch.sqrt(resolution)
+
+        return iou, r2, resolution, acc_onevtx
 
 
     def _compute_metrics(self, logits, vertex_data, loss, plane_to_losses):
@@ -657,7 +668,8 @@ class trainercore(object):
             metrics[f'accuracy_p{p}'] = plane_to_accuracies[p][0].data
             metrics[f'iou_p{p}'] = plane_to_accuracies[p][0]
             metrics[f'r2_p{p}'] = plane_to_accuracies[p][1]
-            metrics[f'acc_onevtx_p{p}'] = plane_to_accuracies[p][2]
+            metrics[f'resolution_cm_p{p}'] = plane_to_accuracies[p][2]
+            metrics[f'acc_onevtx_p{p}'] = plane_to_accuracies[p][3]
 
         return metrics
 
