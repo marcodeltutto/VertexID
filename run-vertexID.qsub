@@ -1,0 +1,33 @@
+#!/bin/bash -l
+#COBALT -t 150
+#COBALT -n 3
+#COBALT -A datascience
+#COBALT -q single-gpu
+
+module load conda/2021-11-30
+conda activate
+module load hdf5
+
+source /lus/grand/projects/datascience/cadams/thetagpu-conda-2021-11-20/bin/activate
+
+WORKDIR=/home/cadams/ThetaGPU/VertexID
+
+cd $WORKDIR
+
+N_NODES=$(cat $COBALT_NODEFILE | wc -l)
+RANKS_PER_NODE=8
+let N_RANKS=${RANKS_PER_NODE}*${N_NODES}
+
+let MB=${N_RANKS}*4
+
+
+mpirun -n $N_RANKS -hostfile ${COBALT_NODEFILE} -map-by node \
+-x VIRTUAL_ENV \
+-x PATH \
+-x LD_LIBRARY_PATH \
+-x PYTHONSTARTUP \
+-x PYTHONUSERBASE \
+python bin/exec.py train -d \
+-f /lus/grand/projects/datascience/cadams/datasets/DUNE/full_merged/pixsim_full_train.h5 \
+--distributed-mode horovod \
+-mb 64 yolo
