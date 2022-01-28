@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 import os,sys,signal
 import time
+import pathlib
+import logging
+from logging import handlers
+import datetime
 
 import numpy
 
@@ -17,7 +21,7 @@ import argparse
 
 class VertexID(object):
 
-    def __init__(self):
+    def __init__(self, config=None):
 
         # This technique is taken from: https://chase-seibert.github.io/blog/2014/03/21/python-multilevel-argparse.html
         parser = argparse.ArgumentParser(
@@ -33,13 +37,58 @@ The most commonly used commands are:
         # parse_args defaults to [1:] for args, but you need to
         # exclude the rest of the args too, or validation will fail
         args = parser.parse_args(sys.argv[1:2])
+
+
         if not hasattr(self, args.command):
-            print(f'Unrecognized command {args.command}')
+            logger.error(f'Unrecognized command {args.command}')
             parser.print_help()
             exit(1)
         # use dispatch pattern to invoke method with same name
         getattr(self, args.command)()
 
+
+
+    def init_mpi(self, distributed):
+        if not distributed:
+            return 0
+        else:
+            from mpi4py import MPI
+            comm = MPI.COMM_WORLD
+            return comm.Get_rank()
+
+
+    def configure_logger(self, rank):
+
+        logger = logging.getLogger()
+
+        # Create a handler for STDOUT, but only on the root rank.
+        # If not distributed, we still get 0 passed in here.
+        if rank == 0:
+            stream_handler = logging.StreamHandler(sys.stdout)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            stream_handler.setFormatter(formatter)
+            handler = handlers.MemoryHandler(capacity = 0, target=stream_handler)
+            logger.addHandler(handler)
+
+            # Add a file handler too:
+            time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            self.args.log_directory = self.args.log_directory + '/' + time_str
+            pathlib.Path(self.args.log_directory).mkdir(parents=True, exist_ok=True)
+            log_file = self.args.log_directory + "/process.log"
+
+
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setFormatter(formatter)
+            file_handler = handlers.MemoryHandler(capacity=10, target=file_handler)
+            logger.addHandler(file_handler)
+
+            logger.setLevel(logging.INFO)
+        else:
+            # in this case, MPI is available but it's not rank 0
+            # create a null handler
+            handler = logging.NullHandler()
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
 
     def train(self):
         self.parser = argparse.ArgumentParser(
@@ -51,37 +100,37 @@ The most commonly used commands are:
 
         # Define parameters exclusive to training:
 
-        self.parser.add_argument('-lr','--learning-rate', 
-            type    = float, 
+        self.parser.add_argument('-lr','--learning-rate',
+            type    = float,
             default = 0.003,
             help    = 'Initial learning rate')
-        self.parser.add_argument('-si','--summary-iteration', 
-            type    = int, 
+        self.parser.add_argument('-si','--summary-iteration',
+            type    = int,
             default = 1,
             help    = 'Period (in steps) to store summary in tensorboard log')
-        self.parser.add_argument('-li','--logging-iteration', 
-            type    = int, 
+        self.parser.add_argument('-li','--logging-iteration',
+            type    = int,
             default = 1,
             help    = 'Period (in steps) to print values to log')
-        self.parser.add_argument('-ci','--checkpoint-iteration', 
-            type    = int, 
+        self.parser.add_argument('-ci','--checkpoint-iteration',
+            type    = int,
             default = 100,
             help    = 'Period (in steps) to store snapshot of weights')
-        self.parser.add_argument('--lr-schedule', 
-            type    = str, 
-            choices = ['flat', '1cycle', 'triangle_clr', 'exp_range_clr', 'decay', 'expincrease'], 
+        self.parser.add_argument('--lr-schedule',
+            type    = str,
+            choices = ['flat', '1cycle', 'triangle_clr', 'exp_range_clr', 'decay', 'expincrease'],
             default = 'flat',
             help    = 'Apply a learning rate schedule')
-        self.parser.add_argument('--optimizer', 
-            type    = str, 
-            choices = ['Adam', 'SGD'], 
+        self.parser.add_argument('--optimizer',
+            type    = str,
+            choices = ['Adam', 'SGD'],
             default = 'Adam',
             help    = 'Optimizer to use')
-        self.parser.add_argument('-cd','--checkpoint-directory', 
+        self.parser.add_argument('-cd','--checkpoint-directory',
             default = None,
             help    = 'Prefix (directory + file prefix) for snapshots of weights')
-        self.parser.add_argument('--weight-decay', 
-            type    = float, 
+        self.parser.add_argument('--weight-decay',
+            type    = float,
             default = 0.0,
             help    = "Weight decay strength")
 
@@ -93,11 +142,15 @@ The most commonly used commands are:
         self.args = self.parser.parse_args(sys.argv[2:])
         self.args.training = True
 
+        rank = self.init_mpi(self.args.distributed)
+
+        self.configure_logger(rank)
+        logger = logging.getLogger()
 
         self.make_trainer()
 
-        print("Running Training")
-        print(self.__str__())
+        logger.info("Running Training")
+        logger.info(self.__str__())
 
         self.trainer.initialize()
         self.trainer.batch_process()
@@ -105,12 +158,12 @@ The most commonly used commands are:
 
     def add_network_parsers(self, parser):
         # Here, we define the networks available.  In io test mode, used to determine what the IO is.
-        network_parser = parser.add_subparsers( 
-            title          = "Networks", 
+        network_parser = parser.add_subparsers(
+            title          = "Networks",
             dest           = "network",
             description    = 'Which network architecture to use.')
 
-        # Here, we do a switch on the networks allowed:        
+        # Here, we do a switch on the networks allowed:
         yolo.YOLOFlags().build_parser(network_parser)
 
 
@@ -125,8 +178,14 @@ The most commonly used commands are:
         # TWO argvs, ie the command (exec.py) and the subcommand (iotest)
         self.args = self.parser.parse_args(sys.argv[2:])
         self.args.training = False
-        print("Running IO Test")
-        print(self.__str__())
+
+        rank = self.init_mpi(self.args.distributed)
+
+        self.configure_logger(rank)
+        logger = logging.getLogger()
+
+        logger.info("Running IO Test")
+        logger.info(self.__str__())
 
         self.make_trainer()
 
@@ -137,18 +196,18 @@ The most commonly used commands are:
         time.sleep(0.1)
         for i in range(self.args.iterations):
             start = time.time()
-            mb = self.trainer.fetch_next_batch()
-            # print(mb.keys())
+            mb = self.trainer.larcv_fetcher.fetch_next_batch("primary", force_pop=True)
+            # logger.info(mb.keys())
             # label_stats += numpy.sum(mb['label'], axis=0)
 
             end = time.time()
             if not self.args.distributed:
-                print(i, ": Time to fetch a minibatch of data: {}".format(end - start))
+                logger.info(f"{i}: Time to fetch a minibatch of data: {end - start}")
             else:
                 if self.trainer._rank == 0:
-                    print(i, ": Time to fetch a minibatch of data: {}".format(end - start))
+                    logger.info(f"{i}: Time to fetch a minibatch of data: {end - start}")
             # time.sleep(0.5)
-        # print(label_stats)
+        # logger.info(label_stats)
 
     def make_trainer(self):
 
@@ -189,18 +248,25 @@ The most commonly used commands are:
 
     def add_core_configuration(self, parser):
         # These are core parameters that are important for all modes:
-        parser.add_argument('-i', '--iterations', 
-            type    = int, 
+        parser.add_argument('-i', '--iterations',
+            type    = int,
             default = 5000,
             help    = "Number of iterations to process")
 
-        parser.add_argument('-d','--distributed', 
-            action  = 'store_true', 
+        parser.add_argument('-d','--distributed',
+            action  = 'store_true',
             default = False,
             help    = "Run with the MPI compatible mode")
-        parser.add_argument('-m','--compute-mode', 
-            type    = str, 
-            choices = ['CPU','GPU'], 
+
+        parser.add_argument("--distributed-mode",
+            type    = str,
+            choices = ['DDP', 'horovod'],
+            default = 'DDP',
+            help    = "Framework for distributed training")
+
+        parser.add_argument('-m','--compute-mode',
+            type    = str,
+            choices = ['CPU','GPU'],
             default = 'GPU',
             help    = "Selection of compute device, CPU or GPU ")
         parser.add_argument('-im','--image-mode',
@@ -216,7 +282,7 @@ The most commonly used commands are:
             type    = str,
             default = 1024,
             help    = "Input image height")
-        parser.add_argument('-ld','--log-directory', 
+        parser.add_argument('-ld','--log-directory',
             default ="log/",
             help    ="Prefix (directory) for logging information")
 
@@ -226,45 +292,50 @@ The most commonly used commands are:
     def add_io_arguments(self, parser):
 
         # IO PARAMETERS FOR INPUT:
-        parser.add_argument('-f','--file', 
-            type    = str, 
+        parser.add_argument('-f','--file',
+            type    = str,
             default = "/Users/mdeltutt/Downloads/merged_sample_99.h5",
             help    = "IO Input File")
-        parser.add_argument('--input-dimension', 
-            type    = int, 
+        parser.add_argument('--input-dimension',
+            type    = int,
             default = 2,
             help    = "Dimensionality of data to use",
             choices = [2, 3] )
-        parser.add_argument('--start-index', 
-            type    = int, 
+        parser.add_argument('--start-index',
+            type    = int,
             default = 0,
             help    = "Start index, only used in inference mode")
 
-        parser.add_argument('--label-mode', 
-            type    = str, 
-            choices = ['split', 'all'], 
-            default = 'all',
-            help    = "Run with split labels (multiple classifiers) or all in one" )
+        # parser.add_argument('--label-mode',
+        #     type    = str,
+        #     choices = ['split', 'all'],
+        #     default = 'all',
+        #     help    = "Run with split labels (multiple classifiers) or all in one" )
 
         parser.add_argument('-mb','--minibatch-size',
-            type    = int, 
+            type    = int,
             default = 2,
             help    = "Number of images in the minibatch size")
-        
+
+        parser.add_argument('-ds', '--downsample-images',
+            default = 0,
+            type    = int,
+            help    = 'Dense downsampling of the images.  This is the number of downsamples applied (0 == none, 1 == once ...) ')
+
         # IO PARAMETERS FOR AUX INPUT:
-        parser.add_argument('--aux-file', 
-            type    = str, 
+        parser.add_argument('--aux-file',
+            type    = str,
             default = None,
             help    = "IO Aux Input File, or output file in inference mode")
 
 
         parser.add_argument('--aux-iteration',
-            type    = int, 
+            type    = int,
             default = 10,
             help    = "Iteration to run the aux operations")
 
         parser.add_argument('--aux-minibatch-size',
-            type    = int, 
+            type    = int,
             default = 2,
             help    = "Number of images in the minibatch size")
 
@@ -272,28 +343,22 @@ The most commonly used commands are:
 
 
 
-def main():
-
-    FLAGS = flags.FLAGS()
-    FLAGS.parse_args()
-    # FLAGS.dump_config()
-
-    
-
-    if FLAGS.MODE is None:
-        raise Exception()
-
-
-        
-    if FLAGS.MODE == 'train' or FLAGS.MODE == 'inference':
-
-        trainer.initialize()
-        trainer.batch_process()
-
-       
-
-
+# @hydra.main(config_path="../src/config", config_name="config")
+# def main(cfg : OmegaConf) -> None:
+#     s = VertexID(cfg)
+#     s.stop()
 
 if __name__ == '__main__':
-    s = VertexID()  
+
+    # if 'OMPI_COMM_WORLD_LOCAL_RANK' in os.environ:
+    #
+    #     # nodefile = os.environ['COBALT_NODEFILE']
+    #     # n_nodes = len(open(nodefile, "r").read().split())
+    #
+    #     target_gpu = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
+    #     os.environ['CUDA_VISIBLE_DEVICES'] = str(target_gpu % 8)
+    #     # logger.info('Setting CUDA_VISIBLE_DEVICES to', os.environ['CUDA_VISIBLE_DEVICES'])
+
+    # main()
+    s = VertexID()
     s.stop()

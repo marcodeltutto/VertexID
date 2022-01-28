@@ -91,14 +91,14 @@ def output_io(input_file, output_file):
     # These lines slim down the output file.
     # Without them, 25 output events is 2.8M and takes 38s
     # With the, 25 output events is 119K and takes 36s
-    # config.set_param("ReadOnlyType", "[\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"cluster2d\",\"cluster2d\",\"cluster3d\",\"cluster3d\"]")  
-    # config.set_param("ReadOnlyName", "[\"neutrino\",\"cpiID\",\"neutID\",\"npiID\",\"protID\",\"all\",\"duneseg\",\"duneseg\",\"segment\",\"duneseg\",\"segment\"]")  
+    # config.set_param("ReadOnlyType", "[\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"cluster2d\",\"cluster2d\",\"cluster3d\",\"cluster3d\"]")
+    # config.set_param("ReadOnlyName", "[\"neutrino\",\"cpiID\",\"neutID\",\"npiID\",\"protID\",\"all\",\"duneseg\",\"duneseg\",\"segment\",\"duneseg\",\"segment\"]")
 
-    config.set_param("ReadOnlyType", "[\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"cluster2d\"]")  
-    config.set_param("ReadOnlyName", "[\"neutrino\",\"cpiID\",\"neutID\",\"npiID\",\"protID\",\"all\",\"segment\",\"duneseg\"]")  
-    
-    # config.set_param("ReadOnlyType", "[\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\"]")  
-    # config.set_param("ReadOnlyName", "[\"neutrino\",\"cpiID\",\"neutID\",\"npiID\",\"protID\",\"all\",\"segment\"]")  
+    config.set_param("ReadOnlyType", "[\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"cluster2d\"]")
+    config.set_param("ReadOnlyName", "[\"neutrino\",\"cpiID\",\"neutID\",\"npiID\",\"protID\",\"all\",\"segment\",\"duneseg\"]")
+
+    # config.set_param("ReadOnlyType", "[\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\",\"particle\"]")
+    # config.set_param("ReadOnlyName", "[\"neutrino\",\"cpiID\",\"neutID\",\"npiID\",\"protID\",\"all\",\"segment\"]")
 
     return config
 
@@ -137,7 +137,7 @@ def gen_vertex_filler(name, producer="\"neutrino\""):
 
     proc.set_param("Verbosity",         "1")
     proc.set_param("ParticleProducer",  producer)
-    proc.set_param("PdgClassList",      "[{}]".format(",".join([str(i) for i in range(36)])))
+    # proc.set_param("PdgClassList",      "[{}]".format(",".join([str(i) for i in range(36)])))
 
     return proc
 
@@ -150,24 +150,18 @@ def gen_label_filler(label_mode, prepend_names):
 
         proc.set_param("Verbosity",         "3")
         proc.set_param("ParticleProducer",  "all")
-        proc.set_param("PdgClassList",      "[{}]".format(",".join([str(i) for i in range(36)])))
+        # proc.set_param("PdgClassList",      "[{}]".format(",".join([str(i) for i in range(36)])))
 
         return [proc]
 
     else:
         procs = []
-        for name, l in zip(['neut', 'prot', 'cpi', 'npi'], [3, 3, 2, 2]): 
+        for name, l in zip(['neut', 'prot', 'cpi', 'npi'], [3, 3, 2, 2]):
             proc  = larcv_io.ProcessConfig(proc_name=prepend_names + "label_" + name, proc_type="BatchFillerPIDLabel")
 
             proc.set_param("Verbosity",         "3")
             proc.set_param("ParticleProducer",  name+"ID")
-            proc.set_param("PdgClassList",      "[{}]".format(",".join([str(i) for i in range(l)])))
+            # proc.set_param("PdgClassList",      "[{}]".format(",".join([str(i) for i in range(l)])))
 
             procs.append(proc)
         return procs
-
-
-
-
-
-
