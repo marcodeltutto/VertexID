@@ -59,7 +59,7 @@ class larcv_fetcher(object):
         if len(files) == 0:
             raise Exception(f"Cannot find files with pattern {input_file}.")
 
-        print(f'larcv_fetcher: {name}: using {len(files)} file(s).')
+        logger.info(f'larcv_fetcher: {name}: using {len(files)} file(s).')
 
         # First, verify the files exist:
         for f in files:
@@ -130,7 +130,7 @@ class larcv_fetcher(object):
         # Add the label configs:
         for label_name, l in zip(['neut', 'prot', 'cpi', 'npi'], [3, 3, 2, 2]):
             cb.add_batch_filler(
-                datatype     = "particle",
+                datatype     = "PID",
                 producer     = f"{label_name}ID",
                 name         = name+f'label_{label_name}',
                 PdgClassList = [i for i in range(l)]
@@ -139,7 +139,7 @@ class larcv_fetcher(object):
 
 
         if print_config:
-            print(cb.print_config())
+            logger.info(cb.print_config())
 
         # Prepare data managers:
         io_config = {

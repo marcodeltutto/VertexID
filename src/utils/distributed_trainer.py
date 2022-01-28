@@ -12,16 +12,19 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 
 
-import horovod.torch as hvd
-hvd.init()
+import logging
+logger = logging.getLogger()
 
+try:
+    import horovod.torch as hvd
+except:
+    pass
 
 # from larcv.distributed_queue_interface import queue_interface
 
 
 from .trainercore import trainercore
 
-import tensorboardX
 
 
 
@@ -39,8 +42,56 @@ class distributed_trainer(trainercore):
 
         trainercore.__init__(self, args)
 
+        if self.args.distributed_mode == "horovod":
+            import horovod.torch as hvd
+            hvd.init()
+            # if self.args.compute_mode == "GPU":
+                # os.environ['CUDA_VISIBLE_DEVICES'] = str(hvd.local_rank())
+            self._rank            = hvd.rank()
+            self._local_rank      = hvd.local_rank()
+            self._size            = hvd.size()
+        else:
+            import socket
+            import torch.distributed as dist
+            from torch.nn.parallel import DistributedDataParallel as DDP
+
+            rank = MPI.COMM_WORLD.Get_rank()
+
+
+            # Pytorch will look for these:
+            local_rank = os.environ['OMPI_COMM_WORLD_LOCAL_RANK']
+            size = MPI.COMM_WORLD.Get_size()
+            rank = MPI.COMM_WORLD.Get_rank()
+
+            os.environ["RANK"] = str(rank)
+            os.environ["WORLD_SIZE"] = str(size)
+            # os.environ['CUDA_VISIBLE_DEVICES'] = str(local_rank)
+
+            self._rank = rank
+            self._size = size
+            self._local_rank = local_rank
+
+            # It will want the master address too, which we'll broadcast:
+            if rank == 0:
+                master_addr = socket.gethostname()
+            else:
+                master_addr = None
+
+            master_addr = MPI.COMM_WORLD.bcast(master_addr, root=0)
+            os.environ["MASTER_ADDR"] = master_addr
+            os.environ["MASTER_PORT"] = str(2345)
+
+            # What backend?  nccl on GPU, gloo on CPU
+            if self.args.compute_mode == "GPU": backend = 'nccl'
+            elif self.args.compute_mode == "CPU": backend = 'gloo'
+
+            torch.distributed.init_process_group(
+                backend=backend, init_method='env://')
+
+
+
         # Put the IO rank as the last rank in the COMM, since rank 0 does tf saves
-        root_rank = hvd.size() - 1
+        root_rank = self._size - 1
 
         # if self.args.compute_mode == "GPU":
         #     os.environ['CUDA_VISIBLE_DEVICES'] = str(hvd.local_rank())
@@ -53,13 +104,12 @@ class distributed_trainer(trainercore):
 
 
         # self._larcv_interface = queue_interface()#read_option='read_from_single_local_rank')
-        self._iteration       = 0
-        self._rank            = hvd.rank()
-        self._local_rank      = hvd.local_rank()
-        self._cleanup         = []
+        # self._iteration       = 0
+        # self._rank            = hvd.rank()
+        # self._local_rank      = hvd.local_rank()
         self._global_step     = torch.as_tensor(-1)
 
-        print('This is HVD rank', self._rank, ', local rank', self._local_rank)
+        # print('This is rank', self._rank, ', local rank', self._local_rank)
 
         # if self._rank == 0:
         #     self.args.dump_config()
@@ -72,16 +122,18 @@ class distributed_trainer(trainercore):
 
     def save_model(self):
 
-        if hvd.rank() == 0:
+        if self._rank == 0:
             trainercore.save_model(self)
 
 
     def init_optimizer(self):
 
+
         # This takes the base optimizer (self._opt) and replaces
         # it with a distributed version
 
         trainercore.init_optimizer(self)
+
 
         if self.args.lr_schedule == '1cycle':
             self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -102,15 +154,15 @@ class distributed_trainer(trainercore):
             self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
                 self._opt, constant_lr, last_epoch=-1)
 
-
-        self._opt = hvd.DistributedOptimizer(self._opt, named_parameters=self._net.named_parameters())
+        if self.args.distributed_mode == "horovod":
+            self._opt = hvd.DistributedOptimizer(self._opt, named_parameters=self._net.named_parameters())
 
 
 
 
 
     def init_saver(self):
-        if hvd.rank() == 0:
+        if self._rank == 0:
             trainercore.init_saver(self)
         else:
             self._saver = None
@@ -124,7 +176,8 @@ class distributed_trainer(trainercore):
 
 
     def restore_model(self):
-        if hvd.rank() == 0:
+
+        if self._rank == 0:
             state = trainercore.restore_model(self)
 
             if state is not None:
@@ -132,135 +185,67 @@ class distributed_trainer(trainercore):
             else:
                 self._global_step = torch.as_tensor(0)
 
+        if self.args.distributed_mode == "horovod":
 
-        # Broadcast the global step:
-        self._global_step = hvd.broadcast_object(self._global_step, root_rank = 0)
+            # Broadcast the global step:
+            self._global_step = hvd.broadcast_object(self._global_step, root_rank = 0)
 
-        # Broadcast the state of the model:
-        hvd.broadcast_parameters(self._net.state_dict(), root_rank = 0)
+            # Broadcast the state of the model:
+            hvd.broadcast_parameters(self._net.state_dict(), root_rank = 0)
 
-        # Broadcast the optimizer state:
-        hvd.broadcast_optimizer_state(self._opt, root_rank = 0)
+            # Broadcast the optimizer state:
+            hvd.broadcast_optimizer_state(self._opt, root_rank = 0)
 
-        # Horovod doesn't actually move the optimizer onto a GPU:
-        if self.args.compute_mode == "GPU":
-            for state in self._opt.state.values():
-                for k, v in state.items():
-                    if torch.is_tensor(v):
-                        state[k] = v.cuda()
+            # Horovod doesn't actually move the optimizer onto a GPU:
+            if self.args.compute_mode == "GPU":
+                for state in self._opt.state.values():
+                    for k, v in state.items():
+                        if torch.is_tensor(v):
+                            state[k] = state[k].to(self.default_device())
 
 
 
-        # Broadcast the LR Schedule state:
-        state_dict = hvd.broadcast_object(self._lr_scheduler.state_dict(), root_rank = 0)
+            # Broadcast the LR Schedule state:
+            state_dict = hvd.broadcast_object(self._lr_scheduler.state_dict(), root_rank = 0)
 
-        # This is important to ensure LR continuity after restoring:
-        # Step the learning rate scheduler up to the right amount
-        # if self._global_step > 0:
-        #     i = 0
-        #     while i < self._global_step:
-        #         self._lr_scheduler.step()
-        #         i += 1
+        elif self.args.distributed_mode == "DDP":
+            self._net.to(self.default_device())
+
+            # print(self._net.parameters)
+
+            self._net = torch.nn.parallel.DistributedDataParallel(self._net, find_unused_parameters=False)
+            # print(self._net.parameters)
+
+            self._global_step = MPI.COMM_WORLD.bcast(self._global_step, root=0)
+            if self.args.training:
+                state_dict = MPI.COMM_WORLD.bcast(self._lr_scheduler.state_dict(), root=0)
+        # Load the state dict:
+        if self.args.training:
+            self._lr_scheduler.load_state_dict(state_dict)
 
 
         return
-
-
-    # def initialize(self, io_only = False):
-
-    #     print("HVD rank: {}".format(hvd.rank()))
-
-    #     self._initialize_io(color=self._rank)
-
-    #     if io_only:
-    #         return
-
-    #     dims = self._larcv_interface.fetch_minibatch_dims('primary')
-
-    #     # This sets up the necessary output shape:
-    #     if self.args.label_mode == 'split':
-    #         output_shape = { key : dims[key] for key in self.args.keyword_label}
-    #     else:
-    #         output_shape = dims[self.args.keyword_label]
-
-    #     self._net = self.args._net(output_shape)
-    #     # print("Rank {}".format(hvd.rank()) + " Built network")
-
-
-    #     if self.args.training:
-    #         self._net.train(True)
-
-
-
-    #     if hvd.rank() == 0:
-    #         n_trainable_parameters = 0
-    #         for var in self._net.parameters():
-    #             n_trainable_parameters += numpy.prod(var.shape)
-            # print("Rank {}".format(hvd.rank()) + " Total number of trainable parameters in this network: {}".format(n_trainable_parameters))
-
-        # self.init_optimizer()
-
-        # self.init_saver()
-
-        # If restoring, this will restore the model on the root node
-        # self.restore_model()
-
-        # self._global_step = hvd.broadcast(self._global_step, root_rank = 0)
-
-        # This is important to ensure LR continuity after restoring:
-        # Step the learning rate scheduler up to the right amount
-        # if self._global_step > 0:
-        #     i = 0
-        #     while i < self._global_step:
-        #         self._lr_scheduler.step()
-        #         i += 1
-
-        # # Now broadcast the model to syncronize the optimizer and model:
-        # hvd.broadcast_parameters(self._net.state_dict(), root_rank = 0)
-        # hvd.broadcast_optimizer_state(self._opt, root_rank = 0)
-        # print("Rank {}".format(hvd.rank()) + " Parameters broadcasted")
-
-
-        # if self.args.compute_mode == "CPU":
-        #     pass
-        # if self.args.compute_mode == "GPU":
-        #     self._net.cuda()
-        #     # This moves the optimizer to the GPU:
-        #     for state in self._opt.state.values():
-        #         for k, v in state.items():
-        #             if torch.is_tensor(v):
-        #                 state[k] = v.cuda()
-
-
-        # print("Rank ", hvd.rank(), next(self._net.parameters()).device)
-
-        # if self.args.label_mode == 'all':
-        #     self._log_keys = ['loss', 'accuracy']
-        # elif self.args.label_mode == 'split':
-        #     self._log_keys = ['loss']
-        #     for key in self.args.keyword_label:
-        #         self._log_keys.append('acc/{}'.format(key))
-
-
 
 
 
     def summary(self, metrics, saver=""):
-        if hvd.rank() == 0:
+        if self._rank == 0:
             trainercore.summary(self, metrics, saver)
         return
 
     # def _compute_metrics(self, logits, minibatch_data, loss):
-    def _compute_metrics(self, logits, vertex_data, loss, loss_x=0, loss_y=0, loss_obj=0, loss_cls=0):
+    def _compute_metrics(self, logits, vertex_data, loss, plane_to_losses):
         # This function calls the parent function which computes local metrics.
         # Then, it performs an all reduce on all metrics:
         # metrics = trainercore._compute_metrics(self, logits, minibatch_data, loss)
-        metrics = trainercore._compute_metrics(self, logits, vertex_data, loss, loss_x, loss_y, loss_obj, loss_cls)
-
-
-        for key in metrics:
-            metrics[key] = hvd.allreduce(metrics[key], name = key)
-
+        metrics = trainercore._compute_metrics(self, logits, vertex_data, loss, plane_to_losses)
+        if self.args.distributed_mode == "horovod":
+            for key in metrics:
+                metrics[key] = hvd.allreduce(metrics[key], name = key)
+        elif self.args.distributed_mode == "DDP":
+            for key in metrics:
+                torch.distributed.all_reduce(metrics[key])
+                metrics[key] /= self._size
         return metrics
 
     # def on_epoch_end(self):
@@ -271,19 +256,44 @@ class distributed_trainer(trainercore):
     #     # pass
 
 
+    def default_device_context(self):
+
+        # Convert the input data to torch tensors
+        if self.args.compute_mode == "GPU":
+            if 'CUDA_VISIBLE_DEVICES' in os.environ:
+                # Then, it's manually set, use it
+                return torch.cuda.device(0)
+            else:
+                return torch.cuda.device(int(self._local_rank))
+        else:
+            return contextlib.nullcontext
+            # device = torch.device('cpu')
+
+    def default_device(self):
+
+        if self.args.compute_mode == "GPU":
+            if 'CUDA_VISIBLE_DEVICES' in os.environ:
+                # Then, it's manually set, use it
+                return torch.device("cuda:0")
+            else:
+                return torch.device(f"cuda:{self._local_rank}")
+        else:
+            device = torch.device('cpu')
+
+
 
     def to_torch(self, minibatch_data):
 
         # This function wraps the to-torch function but for a gpu forces
 
-        device = self.get_device()
+        device = self.default_device()
 
         minibatch_data = trainercore.to_torch(self, minibatch_data, device)
 
         return minibatch_data
 
     def log(self, metrics, saver=""):
-        if hvd.rank() == 0:
+        if self._rank == 0:
             trainercore.log(self, metrics, saver)
 
 
@@ -416,7 +426,3 @@ def constant_lr(step):
     #   end_lr = self.args.learning_rate * 1.e8
 
     #   return math.exp(step * math.log(end_lr / start_lr) / self.args.iterations)
-
-
-
-

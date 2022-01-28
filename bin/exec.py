@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 import os,sys,signal
 import time
+import pathlib
+import logging
+from logging import handlers
+import datetime
 
 import numpy
 
@@ -33,13 +37,58 @@ The most commonly used commands are:
         # parse_args defaults to [1:] for args, but you need to
         # exclude the rest of the args too, or validation will fail
         args = parser.parse_args(sys.argv[1:2])
+
+
         if not hasattr(self, args.command):
-            print(f'Unrecognized command {args.command}')
+            logger.error(f'Unrecognized command {args.command}')
             parser.print_help()
             exit(1)
         # use dispatch pattern to invoke method with same name
         getattr(self, args.command)()
 
+
+
+    def init_mpi(self, distributed):
+        if not distributed:
+            return 0
+        else:
+            from mpi4py import MPI
+            comm = MPI.COMM_WORLD
+            return comm.Get_rank()
+
+
+    def configure_logger(self, rank):
+
+        logger = logging.getLogger()
+
+        # Create a handler for STDOUT, but only on the root rank.
+        # If not distributed, we still get 0 passed in here.
+        if rank == 0:
+            stream_handler = logging.StreamHandler(sys.stdout)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            stream_handler.setFormatter(formatter)
+            handler = handlers.MemoryHandler(capacity = 0, target=stream_handler)
+            logger.addHandler(handler)
+
+            # Add a file handler too:
+            time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            self.args.log_directory = self.args.log_directory + '/' + time_str
+            pathlib.Path(self.args.log_directory).mkdir(parents=True, exist_ok=True)
+            log_file = self.args.log_directory + "/process.log"
+
+
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setFormatter(formatter)
+            file_handler = handlers.MemoryHandler(capacity=10, target=file_handler)
+            logger.addHandler(file_handler)
+
+            logger.setLevel(logging.INFO)
+        else:
+            # in this case, MPI is available but it's not rank 0
+            # create a null handler
+            handler = logging.NullHandler()
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
 
     def train(self):
         self.parser = argparse.ArgumentParser(
@@ -93,11 +142,15 @@ The most commonly used commands are:
         self.args = self.parser.parse_args(sys.argv[2:])
         self.args.training = True
 
+        rank = self.init_mpi(self.args.distributed)
+
+        self.configure_logger(rank)
+        logger = logging.getLogger()
 
         self.make_trainer()
 
-        print("Running Training")
-        print(self.__str__())
+        logger.info("Running Training")
+        logger.info(self.__str__())
 
         self.trainer.initialize()
         self.trainer.batch_process()
@@ -125,8 +178,14 @@ The most commonly used commands are:
         # TWO argvs, ie the command (exec.py) and the subcommand (iotest)
         self.args = self.parser.parse_args(sys.argv[2:])
         self.args.training = False
-        print("Running IO Test")
-        print(self.__str__())
+
+        rank = self.init_mpi(self.args.distributed)
+
+        self.configure_logger(rank)
+        logger = logging.getLogger()
+
+        logger.info("Running IO Test")
+        logger.info(self.__str__())
 
         self.make_trainer()
 
@@ -137,18 +196,18 @@ The most commonly used commands are:
         time.sleep(0.1)
         for i in range(self.args.iterations):
             start = time.time()
-            mb = self.trainer.fetch_next_batch()
-            # print(mb.keys())
+            mb = self.trainer.larcv_fetcher.fetch_next_batch("primary", force_pop=True)
+            # logger.info(mb.keys())
             # label_stats += numpy.sum(mb['label'], axis=0)
 
             end = time.time()
             if not self.args.distributed:
-                print(i, ": Time to fetch a minibatch of data: {}".format(end - start))
+                logger.info(f"{i}: Time to fetch a minibatch of data: {end - start}")
             else:
                 if self.trainer._rank == 0:
-                    print(i, ": Time to fetch a minibatch of data: {}".format(end - start))
+                    logger.info(f"{i}: Time to fetch a minibatch of data: {end - start}")
             # time.sleep(0.5)
-        # print(label_stats)
+        # logger.info(label_stats)
 
     def make_trainer(self):
 
@@ -198,6 +257,13 @@ The most commonly used commands are:
             action  = 'store_true',
             default = False,
             help    = "Run with the MPI compatible mode")
+
+        parser.add_argument("--distributed-mode",
+            type    = str,
+            choices = ['DDP', 'horovod'],
+            default = 'DDP',
+            help    = "Framework for distributed training")
+
         parser.add_argument('-m','--compute-mode',
             type    = str,
             choices = ['CPU','GPU'],
@@ -277,26 +343,6 @@ The most commonly used commands are:
 
 
 
-def main():
-
-    FLAGS = flags.FLAGS()
-    FLAGS.parse_args()
-    # FLAGS.dump_config()
-
-
-
-    if FLAGS.MODE is None:
-        raise Exception()
-
-
-
-    if FLAGS.MODE == 'train' or FLAGS.MODE == 'inference':
-
-        trainer.initialize()
-        trainer.batch_process()
-
-
-
 # @hydra.main(config_path="../src/config", config_name="config")
 # def main(cfg : OmegaConf) -> None:
 #     s = VertexID(cfg)
@@ -304,19 +350,15 @@ def main():
 
 if __name__ == '__main__':
 
-    if 'OMPI_COMM_WORLD_LOCAL_RANK' in os.environ:
-
-        # nodefile = os.environ['COBALT_NODEFILE']
-        # n_nodes = len(open(nodefile, "r").read().split())
-
-        target_gpu = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
-        os.environ['CUDA_VISIBLE_DEVICES'] = str(target_gpu % 8)
-        print('Setting CUDA_VISIBLE_DEVICES to', os.environ['CUDA_VISIBLE_DEVICES'])
+    # if 'OMPI_COMM_WORLD_LOCAL_RANK' in os.environ:
+    #
+    #     # nodefile = os.environ['COBALT_NODEFILE']
+    #     # n_nodes = len(open(nodefile, "r").read().split())
+    #
+    #     target_gpu = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
+    #     os.environ['CUDA_VISIBLE_DEVICES'] = str(target_gpu % 8)
+    #     # logger.info('Setting CUDA_VISIBLE_DEVICES to', os.environ['CUDA_VISIBLE_DEVICES'])
 
     # main()
     s = VertexID()
     s.stop()
-
-
-
-

@@ -84,7 +84,7 @@ class ResidualBlock(nn.Module):
     A residual block, with two convolutions
     '''
 
-    def __init__(self, infilters, outfilters1, outfilters2, padding=1, batch_norm=True, activation='leaky'):
+    def __init__(self, infilters, outfilters1, outfilters2, padding=1, batch_norm=False, activation='leaky'):
         nn.Module.__init__(self)
 
         self.batch_norm = batch_norm
@@ -130,7 +130,6 @@ class ResidualBlock(nn.Module):
         else:
             self.activ = torch.nn.ReLU()
 
-
     def forward(self, x):
 
         residual = x
@@ -156,7 +155,7 @@ class ResidualBlockSeries(torch.nn.Module):
     A series of residual blocks
     '''
 
-    def __init__(self, n, n_blocks, infilters, outfilters1, outfilters2, padding=1, batch_norm=True, activation='leaky'):
+    def __init__(self, n, n_blocks, infilters, outfilters1, outfilters2, padding=1, batch_norm=False, activation='leaky'):
         torch.nn.Module.__init__(self)
 
         self.blocks = [ ResidualBlock(infilters, outfilters1, outfilters2, padding, batch_norm, activation) for i in range(n_blocks) ]
@@ -219,11 +218,8 @@ class YOLOBlock(nn.Module):
         to attributes of a bounding box.
         '''
 
-
         prediction = prediction.permute(0,2,3,1)
-        prediction[:,:,:,0] = torch.sigmoid(prediction[:,:,:,0])
-        prediction[:,:,:,1] = torch.sigmoid(prediction[:,:,:,1])
-        prediction[:,:,:,2] = torch.sigmoid(prediction[:,:,:,2])
+        prediction[:,:,:,0:2] = torch.sigmoid(prediction[:,:,:,0:2])
 
         return prediction
 
@@ -432,7 +428,6 @@ class YOLO(nn.Module):
                                      cuda=self._cuda)
         self.add_module("yololayer_1", self.yololayer_1)
 
-
     def forward(self, x):
 
         batch_size = x.shape[0]
@@ -442,24 +437,21 @@ class YOLO(nn.Module):
         x = torch.chunk(x, chunks=self.nplanes, dim=1)
 
         # print('initial', x[0].size())
-        x = [self.initial_convolution(_x) for _x in x]
+        x = tuple(self.initial_convolution(_x) for _x in x)
         # print('after initial_convolution', x[0].size())
 
         for i in range(0, self.n_core_blocks):
-            x = [self.dowsample[i](_x) for _x in x]
+            x = tuple(self.dowsample[i](_x) for _x in x)
             # print(i, 'after dowsample', x[0].size())
-            x = [self.residual[i](_x) for _x in x]
+            x = tuple(self.residual[i](_x) for _x in x)
             # print(i, 'after residual', x[0].size())
 
         for i in range(0, len(self.convolution_blocks_1)):
-            x = [self.convolution_blocks_1[i](_x) for _x in x]
+            x = tuple(self.convolution_blocks_1[i](_x) for _x in x)
             # print(i, 'after convolution_blocks_1', x[0].size())
 
 
-        x = [self.yololayer_1(_x) for _x in x]
+        x = tuple(self.yololayer_1(_x) for _x in x)
         # print('after yolo_1', x[0].size())
 
         return x
-
-
-

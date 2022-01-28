@@ -19,6 +19,9 @@ import datetime
 # import tensorboardX
 from torch.utils.tensorboard import SummaryWriter
 
+import logging
+logger = logging.getLogger()
+
 class trainercore(object):
     '''
     This class is the core interface for training.  Each function to
@@ -37,7 +40,7 @@ class trainercore(object):
         access_mode = "random_blocks" if self.mode == "train" else "serial_access"
         # access_mode = "serial_access" if self.mode == "train" else "serial_access"
 
-        print("Access mode:", access_mode)
+        logger.info(f"Access mode: {access_mode}")
 
         self.larcv_fetcher = larcv_fetcher.larcv_fetcher(
             mode              = self.mode,
@@ -114,7 +117,7 @@ class trainercore(object):
         # Override the shape as we are going to use dense images
         input_shape = [input_shape[0], self.args.image_width, self.args.image_height]
 
-        print('Input shape:', input_shape)
+        logger.info(f"Input shape: {input_shape}")
 
         # To initialize the network, we see what the name is
         # and act on that:
@@ -127,10 +130,7 @@ class trainercore(object):
         if self.mode == "train":
             self._net.train(True)
 
-        if self.args.compute_mode == "CPU":
-            pass
-        if self.args.compute_mode == "GPU":
-            self._net.cuda()
+        self._net.to(self.default_device())
 
 
     def initialize(self, io_only=False):
@@ -140,45 +140,45 @@ class trainercore(object):
         if io_only:
             return
 
-        self.init_network()
+        with self.default_device_context():
 
-        n_trainable_parameters = 0
-        for var in self._net.parameters():
-            n_trainable_parameters += numpy.prod(var.shape)
-        print("Total number of trainable parameters in this network: {}".format(n_trainable_parameters))
+            self.init_network()
 
-        self.init_optimizer()
+            self.score_cut = torch.tensor(0.5, device=self.default_device())
 
-        self.init_saver()
+            print(self.score_cut)
 
-        state = self.restore_model()
+            n_trainable_parameters = 0
+            for var in self._net.parameters():
+                n_trainable_parameters += numpy.prod(var.shape)
+            logger.info("Total number of trainable parameters in this network: {}".format(n_trainable_parameters))
 
-        if state is not None:
-            self.load_state(state)
-        else:
-            self._global_step = 0
+            self.init_optimizer()
 
-        # if self.args.compute_mode == "CPU":
-        #     pass
-        # if self.args.compute_mode == "GPU":
-        #     self._net.cuda()
+            self.init_saver()
 
-        # if self.args.label_mode == 'all':
-        #     self._log_keys = ['loss', 'accuracy']
-        # elif self.args.label_mode == 'split':
-        #     self._log_keys = ['loss']
-        #     for key in self.args.keyword_label:
-        #         self._log_keys.append('acc/{}'.format(key))
+            state = self.restore_model()
+
+            if not self.args.distributed:
+                if state is not None:
+                    self.load_state(state)
+                else:
+                    self._global_step = 0
+
+            # if self.args.compute_mode == "CPU":
+            #     pass
+            # if self.args.compute_mode == "GPU":
+            #     self._net.cuda()
+
+            # if self.args.label_mode == 'all':
+            # elif self.args.label_mode == 'split':
+            #     self._log_keys = ['loss']
+            #     for key in self.args.keyword_label:
+            #         self._log_keys.append('acc/{}'.format(key))
+            self._log_keys = ['loss', 'images_per_second']
 
 
-    def get_device(self):
 
-        if self.args.compute_mode == "GPU":
-            device = torch.device('cuda')
-        else:
-            device = torch.device('cpu')
-
-        return device
 
 
     def init_optimizer(self):
@@ -198,9 +198,9 @@ class trainercore(object):
         self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(self._opt, constant_lr, last_epoch=-1)
 
 
-        device = self.get_device()
+        device = self.default_device()
 
-        # weights = torch.tensor([prediction.size(2)*prediction.size(3)-1., 1.], device=self.get_device())
+        # weights = torch.tensor([prediction.size(2)*prediction.size(3)-1., 1.], device=self.default_device())
         # weights = torch.sum(weights) / weights
 
         # bce_loss = torch.nn.BCELoss(weight=weights)
@@ -218,8 +218,7 @@ class trainercore(object):
 
     def init_saver(self):
 
-        time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        save_dir = self.args.log_directory + '/' + time_str
+        save_dir = self.args.log_directory
 
         # This sets up the summary saver:
         if self.args.training:
@@ -242,7 +241,7 @@ class trainercore(object):
         _, checkpoint_file_path = self.get_model_filepath()
 
         if not os.path.isfile(checkpoint_file_path):
-            print("No previously saved model found.")
+            logger.info("No previously saved model found.")
             return None
         # Parse the checkpoint file and use that to get the latest file path
 
@@ -251,7 +250,7 @@ class trainercore(object):
                 if line.startswith("latest: "):
                     chkp_file = line.replace("latest: ", "").rstrip('\n')
                     chkp_file = os.path.dirname(checkpoint_file_path) + "/" + chkp_file
-                    print("Restoring weights from ", chkp_file)
+                    logger.info("Restoring weights from ", chkp_file)
                     break
 
         if self.args.compute_mode == "CPU":
@@ -401,66 +400,69 @@ class trainercore(object):
         '''
         # print('True vertex position:', target)
 
-        target_out = []
-        mask = []
+        with self.default_device_context():
+            target_out = []
+            mask = []
 
-        pitch = 0.4 * 2**self.args.downsample_images
-        padding_x = 286 / 2**self.args.downsample_images
-        padding_y = 124 / 2**self.args.downsample_images
+            pitch = 0.4 * 2**self.args.downsample_images
+            padding_x = 286 / 2**self.args.downsample_images
+            padding_y = 124 / 2**self.args.downsample_images
 
-        batch_size = target.size(0)
+            batch_size = target.size(0)
 
-        for plane in range(len(logits)):
+            for plane in range(len(logits)):
 
-            logits_p = logits[plane]
+                logits_p = logits[plane]
 
-            n_channels = logits_p.size(3)
-            grid_size_w = logits_p.size(1)
-            grid_size_h = logits_p.size(2)
+                n_channels = logits_p.size(3)
+                grid_size_w = logits_p.size(1)
+                grid_size_h = logits_p.size(2)
 
-            print('plane', plane, 'grid_size_w', grid_size_w, 'grid_size_h', grid_size_h)
-            print('logits shape', logits_p.shape)
+                # print('plane', plane, 'grid_size_w', grid_size_w, 'grid_size_h', grid_size_h)
+                # print('logits shape', logits_p.shape)
 
-            target_out_p = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels, device=self.get_device())
-            mask_p = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool, device=self.get_device())
+                target_out_p = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels, device=self.default_device())
+                mask_p = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool, device=self.default_device())
 
-            step_w = self.args.image_width / grid_size_w
-            step_h = self.args.image_height / grid_size_h
+                step_w = self.args.image_width / grid_size_w
+                step_h = self.args.image_height / grid_size_h
 
-            # print('vertex x', target[0, 2], 'y', target[0, 0])
-            # print('vertex x', (target[0, 2]/pitch + padding_x/2), 'y', (target[0, 0]/pitch + padding_y/2))
-            # print('step_w', step_w, 'step_h', step_h)
+                # print('vertex x', target[0, 2], 'y', target[0, 0])
+                # print('vertex x', (target[0, 2]/pitch + padding_x/2), 'y', (target[0, 0]/pitch + padding_y/2))
+                # print('step_w', step_w, 'step_h', step_h)
 
 
-            for batch_id in range(batch_size):
+                for batch_id in range(batch_size):
 
-                projected_x, padding, offset = self._3d_to_2d(target[batch_id, :], plane, pitch)
-                projected_y = target[batch_id, 0] / pitch # common to all planes
+                    projected_x, padding, offset = self._3d_to_2d(target[batch_id, :], plane, pitch)
+                    projected_y = target[batch_id, 0] / pitch # common to all planes
 
-                t_x = (projected_x + offset + padding/2) / step_w
-                t_i = int(t_x)
-                t_y = (projected_y + padding_y/2) / step_h
-                t_j = int(t_y)
+                    t_x = (projected_x + offset + padding/2) / step_w
+                    t_i = int(t_x)
+                    t_y = (projected_y + padding_y/2) / step_h
+                    t_j = int(t_y)
 
-                # t_x = (target[batch_id, 2]/pitch + padding_x/2) / step_w
-                # t_i = int(t_x)
-                # t_y = (target[batch_id, 0]/pitch + padding_y/2) / step_h
-                # t_j = int(t_y)
+                    # t_x = (target[batch_id, 2]/pitch + padding_x/2) / step_w
+                    # t_i = int(t_x)
+                    # t_y = (target[batch_id, 0]/pitch + padding_y/2) / step_h
+                    # t_j = int(t_y)
 
-                target_out_p[batch_id, t_i, t_j, 0] = t_x - t_i
-                target_out_p[batch_id, t_i, t_j, 1] = t_y - t_j
-                target_out_p[batch_id, t_i, t_j, 2] = 1.
-                target_out_p[batch_id, t_i, t_j, 3] = 1.
+                    target_out_p[batch_id, t_i, t_j, 0] = t_x - t_i
+                    target_out_p[batch_id, t_i, t_j, 1] = t_y - t_j
+                    target_out_p[batch_id, t_i, t_j, 2] = 1.
+                    target_out_p[batch_id, t_i, t_j, 3] = 1.
 
-                mask_p[batch_id, t_i, t_j] = 1
+                    mask_p[batch_id, t_i, t_j] = 1
 
-                # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
+                    # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
 
-            # print('target_out_p', target_out_p)
-            numpy.save(f'yolo_tgt_{plane}', target_out_p.cpu())
+                # print('target_out_p', target_out_p)
+                if self._global_step % 25 == 0:
+                    if not self.args.distributed or self._rank == 0:
+                        numpy.save(f'yolo_tgt_{plane}', target_out_p.cpu())
 
-            target_out.append(target_out_p)
-            mask.append(mask_p)
+                target_out.append(target_out_p)
+                mask.append(mask_p)
 
         return target_out, mask
 
@@ -479,11 +481,11 @@ class trainercore(object):
         - a single scalar for the optimizer to use if full=False
         - all losses if full=True
         '''
-        loss     = torch.tensor(0.0, requires_grad=True, device=self.get_device())
-        # loss_x   = torch.tensor(0.0, requires_grad=True, device=self.get_device())
-        # loss_y   = torch.tensor(0.0, requires_grad=True, device=self.get_device())
-        # loss_obj = torch.tensor(0.0, requires_grad=True, device=self.get_device())
-        # loss_cls = torch.tensor(0.0, requires_grad=True, device=self.get_device())
+        loss     = torch.tensor(0.0, requires_grad=True, device=self.default_device())
+        # loss_x   = torch.tensor(0.0, requires_grad=True, device=self.default_device())
+        # loss_y   = torch.tensor(0.0, requires_grad=True, device=self.default_device())
+        # loss_obj = torch.tensor(0.0, requires_grad=True, device=self.default_device())
+        # loss_cls = torch.tensor(0.0, requires_grad=True, device=self.default_device())
 
         plane_to_losses = {}
 
@@ -570,7 +572,7 @@ class trainercore(object):
         return plane_to_accuracies
 
 
-    def _calculate_accuracy_per_plane(self, target, prediction, score_cut=0.5):
+    def _calculate_accuracy_per_plane(self, target, prediction):
         '''
         Calculates the accuracy on a single plane
 
@@ -587,55 +589,61 @@ class trainercore(object):
         - acc_onevtx, the accuracy if there is only one vertex
         '''
 
-        # Get the prediction and target for the object confidence
-        p_obj = prediction[:,:,:,2]
-        t_obj = target[:,:,:,2]
-
-        batch_size = p_obj.size(0)
-
-        #############
-        # If there is only one vertex, calculate the accuracy
-        # by taking the maximum
-        _, idx_pred = p_obj.view(batch_size, -1).max(dim=1)
-        _, idx_targ = t_obj.view(batch_size, -1).max(dim=1)
-
-        correct_prediction = torch.eq(idx_pred, idx_targ)
-        acc_onevtx = torch.mean(correct_prediction.float())
-        #############
-
-        # Construct bool tensor that shows where we have or expect to have an object
-        mask_pred = p_obj > score_cut
-        mask_targ = t_obj > score_cut
-
-        # Calculate iou
-        union = torch.sum(mask_targ | mask_pred)
-        intersection = torch.sum(p_obj[mask_targ] > score_cut)
-        iou = intersection.float() / union.float()
-
-        # Calculate r^2
-        x_pred = prediction[mask_targ][:,0]
-        y_pred = prediction[mask_targ][:,1]
-        x_targ = target[mask_targ][:,0]
-        y_targ = target[mask_targ][:,1]
-
-        numpy.save('xypred', numpy.array([x_pred.cpu().float(), y_pred.cpu().float()]))
-        numpy.save('xytarg', numpy.array([x_targ.cpu().float(), y_targ.cpu().float()]))
-
-        grid_size_w = prediction.size(1)
-        grid_size_h = prediction.size(2)
-        pitch = 0.4 # cm
-        a = 1536 / grid_size_w * pitch
-        b = 1024 / grid_size_h * pitch
-        resolution = 0
-
         with torch.no_grad():
-            r2 = self._criterion_mse(x_pred, x_targ) + self._criterion_mse(y_pred, y_targ)
-            resolution += a * a * self._criterion_mse(x_pred, x_targ)
-            resolution += b * b * self._criterion_mse(y_pred, y_targ)
+            # Get the prediction and target for the object confidence
+            p_obj = prediction[:,:,:,2]
+            t_obj = target[:,:,:,2]
 
-        resolution = torch.sqrt(resolution)
+            batch_size = p_obj.size(0)
+            #############
+            # If there is only one vertex, calculate the accuracy
+            # by taking the maximum
+            _, idx_pred = p_obj.view(batch_size, -1).max(dim=1)
+            _, idx_targ = t_obj.view(batch_size, -1).max(dim=1)
 
-        return iou, r2, resolution, acc_onevtx
+            correct_prediction = torch.eq(idx_pred, idx_targ)
+            acc_onevtx = torch.mean(correct_prediction.float())
+            #############
+            #
+            # # Construct bool tensor that shows where we have or expect to have an object
+
+
+            mask_pred = torch.gt(p_obj, self.score_cut)
+            mask_targ = t_obj > self.score_cut
+
+
+            # Calculate iou
+            union = (mask_targ | mask_pred).sum(dim=[1,2]).float() + 1e-7
+            intersection = (mask_targ & mask_pred).sum(dim=[1,2]).float()
+
+            iou = torch.mean(intersection / union)
+
+            # Calculate r^2
+            x_pred = prediction[mask_targ][:,0]
+            y_pred = prediction[mask_targ][:,1]
+            x_targ = target[mask_targ][:,0]
+            y_targ = target[mask_targ][:,1]
+
+            if self._global_step % 25 == 0:
+                if not self.args.distributed or self._rank == 0:
+                    numpy.save('xypred', numpy.array([x_pred.detach().cpu().float(), y_pred.detach().cpu().float()]))
+                    numpy.save('xytarg', numpy.array([x_targ.detach().cpu().float(), y_targ.detach().cpu().float()]))
+
+            grid_size_w = prediction.size(1)
+            grid_size_h = prediction.size(2)
+            pitch = 0.4 # cm
+            a = 1536 / grid_size_w * pitch
+            b = 1024 / grid_size_h * pitch
+            resolution = 0
+
+            with torch.no_grad():
+                r2 = self._criterion_mse(x_pred, x_targ) + self._criterion_mse(y_pred, y_targ)
+                resolution += a * a * self._criterion_mse(x_pred, x_targ)
+                resolution += b * b * self._criterion_mse(y_pred, y_targ)
+
+            resolution = torch.sqrt(resolution)
+
+            return iou, r2, resolution, acc_onevtx
 
 
     def _compute_metrics(self, logits, vertex_data, loss, plane_to_losses):
@@ -652,26 +660,44 @@ class trainercore(object):
         # Call all of the functions in the metrics dictionary:
         metrics = {}
 
+
         # Add the total loss
-        metrics['loss'] = loss.data
+        metrics['loss'] = loss
 
         # Add the losses per plane p and per loss category
         for p in [0, 1, 2]:
-            metrics[f'loss_p{p}_x'] = plane_to_losses[p][0].data
-            metrics[f'loss_p{p}_y'] = plane_to_losses[p][1].data
-            metrics[f'loss_p{p}_obj'] = plane_to_losses[p][2].data
-            metrics[f'loss_p{p}_cls'] = plane_to_losses[p][3].data
+            metrics[f'loss/loss_p{p}_x'] = plane_to_losses[p][0]
+            metrics[f'loss/loss_p{p}_y'] = plane_to_losses[p][1]
+            metrics[f'loss/loss_p{p}_obj'] = plane_to_losses[p][2]
+            metrics[f'loss/loss_p{p}_cls'] = plane_to_losses[p][3]
 
         # Add the accuracies per plane
         plane_to_accuracies = self._calculate_accuracy(vertex_data, logits)
         for p in [0, 1, 2]:
-            metrics[f'accuracy_p{p}'] = plane_to_accuracies[p][0].data
-            metrics[f'iou_p{p}'] = plane_to_accuracies[p][0]
-            metrics[f'r2_p{p}'] = plane_to_accuracies[p][1]
-            metrics[f'resolution_cm_p{p}'] = plane_to_accuracies[p][2]
-            metrics[f'acc_onevtx_p{p}'] = plane_to_accuracies[p][3]
+            metrics[f'accuracy/accuracy_p{p}'] = plane_to_accuracies[p][0]
+            metrics[f'iou/iou_p{p}'] = plane_to_accuracies[p][0]
+            metrics[f'r2/r2_p{p}'] = plane_to_accuracies[p][1]
+            metrics[f'r2/resolution_cm_p{p}'] = plane_to_accuracies[p][2]
+            metrics[f'accuracy/acc_onevtx_p{p}'] = plane_to_accuracies[p][3]
+
 
         return metrics
+
+
+    def default_device_context(self):
+
+        if self.args.compute_mode == "GPU":
+            return torch.cuda.device(0)
+        else:
+            return contextlib.nullcontext
+            # device = torch.device('cpu')
+
+    def default_device(self):
+
+        if self.args.compute_mode == "GPU":
+            return torch.device("cuda")
+        else:
+            device = torch.device('cpu')
 
 
     def log(self, metrics, saver=''):
@@ -690,7 +716,7 @@ class trainercore(object):
             # if self._log_keys != []:
             #     s += ", ".join(["{0}: {1:.3}".format(key, metrics[key]) for key in self._log_keys])
             # else:
-            s += ", ".join(["{0}: {1:.3}".format(key, metrics[key]) for key in metrics])
+            s += ", ".join(["{0}: {1:.3}".format(key, metrics[key]) for key in metrics if key in self._log_keys])
 
 
             try:
@@ -709,7 +735,7 @@ class trainercore(object):
 
             self._previous_log_time = self._current_log_time
 
-            print("{} Step {} metrics: {}".format(saver, self._global_step, s))
+            logger.info("{} Step {} metrics: {}".format(saver, self._global_step, s))
 
 
 
@@ -755,42 +781,38 @@ class trainercore(object):
 
     def to_torch(self, minibatch_data, device=None):
 
-        # Convert the input data to torch tensors
-        if self.args.compute_mode == "GPU":
-            if device is None:
-                device = torch.device('cuda')
-            # print(device)
-
-        else:
-            if device is None:
-                device = torch.device('cpu')
 
 
-        for key in minibatch_data:
-            if key == 'entries' or key =='event_ids':
-                continue
-            if key == 'image' and self.args.image_mode == "sparse":
-                if self.args.input_dimension == 3:
-                    minibatch_data['image'] = (
-                            torch.tensor(minibatch_data['image'][0]).long(),
-                            torch.tensor(minibatch_data['image'][1], device=device),
-                            minibatch_data['image'][2],
-                        )
+        device_context = self.default_device_context()
+
+        if device is None:
+            device = self.default_device()
+        with device_context:
+            for key in minibatch_data:
+                if key == 'entries' or key =='event_ids':
+                    continue
+                if key == 'image' and self.args.image_mode == "sparse":
+                    if self.args.input_dimension == 3:
+                        minibatch_data['image'] = (
+                                torch.tensor(minibatch_data['image'][0]).long(),
+                                torch.tensor(minibatch_data['image'][1], device=device),
+                                minibatch_data['image'][2],
+                            )
+                    else:
+                        minibatch_data['image'] = (
+                                torch.tensor(minibatch_data['image'][0]).long(),
+                                torch.tensor(minibatch_data['image'][1], device=device),
+                                minibatch_data['image'][2],
+                            )
+                elif key == 'image' and self.args.image_mode == 'graph':
+                    minibatch_data[key] = minibatch_data[key].to(device)
                 else:
-                    minibatch_data['image'] = (
-                            torch.tensor(minibatch_data['image'][0]).long(),
-                            torch.tensor(minibatch_data['image'][1], device=device),
-                            minibatch_data['image'][2],
-                        )
-            elif key == 'image' and self.args.image_mode == 'graph':
-                minibatch_data[key] = minibatch_data[key].to(device)
-            else:
-                minibatch_data[key] = torch.tensor(minibatch_data[key],device=device)
+                    minibatch_data[key] = torch.tensor(minibatch_data[key],device=device)
 
-        return minibatch_data
-
+            return minibatch_data
 
     def train_step(self):
+
 
         # For a train step, we fetch data, run a forward and backward pass, and
         # if this is a logging step, we compute some logging metrics.
@@ -808,44 +830,40 @@ class trainercore(object):
         minibatch_data = self.larcv_fetcher.fetch_next_batch("primary", force_pop=True)
         io_end_time = datetime.datetime.now()
 
-        numpy.save('img', minibatch_data['image'])
-        numpy.save('vtx', minibatch_data['vertex'])
+        if self._global_step % 25 == 0 and self._rank == 0:
+            numpy.save("img",minibatch_data['image'])
+            numpy.save("vtx",minibatch_data['vertex'])
 
         minibatch_data = self.to_torch(minibatch_data)
 
-        if self._global_step == 0 and self._rank == 0:
-            # Save one image, as an example
-            self._saver.add_image('example_image', minibatch_data['image'][0])
-            # Save the network, so we can see a network graph in tensorboard
-            self._saver.add_graph(self._net, minibatch_data['image'])
+        with self.default_device_context():
+            if self._global_step == 0 and self._rank == 0:
+                # Save one image, as an example
+                self._saver.add_image('example_image', minibatch_data['image'][0])
+                # Save the network, so we can see a network graph in tensorboard
+                self._saver.add_graph(self._net, minibatch_data['image'])
 
-        # Run a forward pass of the model on the input image:
-        logits = self._net(minibatch_data['image'])
-        # print("Completed forward pass")
-        # print('Output shape', logits.shape)
+            # Run a forward pass of the model on the input image:
+            logits = self._net(minibatch_data['image'])
+            # print('Output shape', logits.shape)
 
-        vertex_data, vertex_mask = self._target_to_yolo(target=minibatch_data['vertex'],
-                                                        logits=logits)
-                                                        # n_channels=logits.size(3),
-                                                        # grid_size_w=logits.size(1),
-                                                        # grid_size_h=logits.size(2))
+            vertex_data, vertex_mask = self._target_to_yolo(target=minibatch_data['vertex'],
+                                                            logits=logits)
+                                                            # n_channels=logits.size(3),
+                                                            # grid_size_w=logits.size(1),
+                                                            # grid_size_h=logits.size(2))
+            # Compute the loss based on the logits
+            loss, plane_to_losses = self._calculate_loss(vertex_data,
+                                                         vertex_mask,
+                                                         logits,
+                                                         full=True)
+            # Compute the gradients for the network parameters:
+            loss.backward()
+            # print('weights', self._net.initial_convolution.conv1.weight)
+            # print('weights grad', self._net.initial_convolution.conv1.weight.grad)
 
-        # Compute the loss based on the logits
-        loss, plane_to_losses = self._calculate_loss(vertex_data,
-                                                     vertex_mask,
-                                                     logits,
-                                                     full=True)
-        # print('loss', loss.item())
-
-        # Compute the gradients for the network parameters:
-        loss.backward()
-        # print("Completed backward pass")
-
-        # print('weights', self._net.initial_convolution.conv1.weight)
-        # print('weights grad', self._net.initial_convolution.conv1.weight.grad)
-
-        # Compute any necessary metrics:
-        metrics = self._compute_metrics(logits, vertex_data, loss, plane_to_losses)
+            # Compute any necessary metrics:
+            metrics = self._compute_metrics(logits, vertex_data, loss, plane_to_losses)
 
 
 
@@ -887,7 +905,6 @@ class trainercore(object):
         self.increment_global_step()
 
         return metrics
-
 
     def val_step(self, n_iterations=1):
 
@@ -972,7 +989,7 @@ class trainercore(object):
             else:
                 for entry in range(self.args.minibatch_size):
                     if iteration > 1 and minibatch_data['entries'][entry] == 0:
-                        print ('Reached max number of entries.')
+                        logger.info('Reached max number of entries.')
                         break
                     this_entry = [minibatch_data['entries'][entry]]
                     this_event_id = [minibatch_data['event_ids'][entry]]
@@ -1024,12 +1041,12 @@ class trainercore(object):
         if not self.args.training:
             if self.args.iterations > int(self._train_data_size/self.args.minibatch_size) + 1:
                 self.args.iterations = int(self._train_data_size/self.args.minibatch_size) + 1
-                print('Number of iterations set to', self.args.iterations)
+                logger.info('Number of iterations set to', self.args.iterations)
 
         # Run iterations
         for i in range(self.args.iterations):
             if self.args.training and self._iteration >= self.args.iterations:
-                print('Finished training (iteration %d)' % self._iteration)
+                logger.info('Finished training (iteration %d)' % self._iteration)
                 self.checkpoint()
                 break
 
@@ -1045,5 +1062,3 @@ class trainercore(object):
                 self._saver.close()
             if self._aux_saver is not None:
                 self._aux_saver.close()
-
-
