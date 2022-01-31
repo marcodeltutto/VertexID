@@ -134,8 +134,12 @@ class trainercore(object):
         # To initialize the network, we see what the name is
         # and act on that:
         # if self.args.network == "yolo":
-        from src.networks import yolo
-        self._net = yolo.YOLO(input_shape, self.args)
+        if self.args.data.image_mode == ImageModeKind.dense:
+            from src.networks import yolo
+            self._net = yolo.YOLO(input_shape, self.args)
+        elif self.args.data.image_mode == ImageModeKind.sparse:
+            from src.networks import sparse_yolo
+            self._net = sparse_yolo.YOLO(input_shape, self.args)
         # else:
         #     raise Exception(f"Couldn't identify network {self.args.network.name}")
 
@@ -814,7 +818,7 @@ class trainercore(object):
                 if key == 'entries' or key =='event_ids':
                     continue
                 if key == 'image' and self.args.data.image_mode == ImageModeKind.sparse:
-                    if self.args.input_dimension == 3:
+                    if self.args.data.input_dimension == 3:
                         minibatch_data['image'] = (
                                 torch.tensor(minibatch_data['image'][0]).long(),
                                 torch.tensor(minibatch_data['image'][1], device=device),
@@ -859,11 +863,11 @@ class trainercore(object):
         minibatch_data = self.to_torch(minibatch_data)
 
         with self.default_device_context():
-            if self._global_step == 0 and self._rank == 0:
-                # Save one image, as an example
-                self._saver.add_image('example_image', minibatch_data['image'][0])
-                # Save the network, so we can see a network graph in tensorboard
-                self._saver.add_graph(self._net, minibatch_data['image'])
+            # if self._global_step == 0 and self._rank == 0:
+            #     # Save one image, as an example
+            #     self._saver.add_image('example_image', minibatch_data['image'][0])
+            #     # Save the network, so we can see a network graph in tensorboard
+            #     self._saver.add_graph(self._net, minibatch_data['image'])
 
             # Run a forward pass of the model on the input image:
             logits = self._net(minibatch_data['image'])
