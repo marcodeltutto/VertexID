@@ -1,19 +1,6 @@
 
 defaults:
+  - base_config
   - _self_
-  - network: pointnet
-  - framework: tensorflow
-  - mode: train
-  - dataset: dune2d
 
-run:
-  distributed: False
-  compute_mode: GPU
-  iterations: 50
-  minibatch_size: 2
-  aux_minibatch_size: ${run.minibatch_size}
-  aux_iterations: 10
-  id: ???
-  precision: float32
-  profile: False
-  output_dir: output/${framework.name}/${network.name}/${dataset.dimension}/${run.id}/
+output_dir: output/${network.name}//${run.id}/

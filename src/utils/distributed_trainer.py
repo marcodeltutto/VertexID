@@ -25,7 +25,7 @@ except:
 
 from .trainercore import trainercore
 
-
+from src.config import ComputeMode, ModeKind, DistributedMode
 
 
 
@@ -42,10 +42,10 @@ class distributed_trainer(trainercore):
 
         trainercore.__init__(self, args)
 
-        if self.args.distributed_mode == "horovod":
+        if self.args.run.distributed_mode == DistributedMode.horovod:
             import horovod.torch as hvd
             hvd.init()
-            # if self.args.compute_mode == "GPU":
+            # if self.args.run.compute_mode == ComputeMode.GPU:
                 # os.environ['CUDA_VISIBLE_DEVICES'] = str(hvd.local_rank())
             self._rank            = hvd.rank()
             self._local_rank      = hvd.local_rank()
@@ -82,8 +82,8 @@ class distributed_trainer(trainercore):
             os.environ["MASTER_PORT"] = str(2345)
 
             # What backend?  nccl on GPU, gloo on CPU
-            if self.args.compute_mode == "GPU": backend = 'nccl'
-            elif self.args.compute_mode == "CPU": backend = 'gloo'
+            if self.args.run.compute_mode == ComputeMode.GPU: backend = 'nccl'
+            elif self.args.run.compute_mode == ComputeMode.CPU: backend = 'gloo'
 
             torch.distributed.init_process_group(
                 backend=backend, init_method='env://')
@@ -134,27 +134,30 @@ class distributed_trainer(trainercore):
 
         trainercore.init_optimizer(self)
 
+        #
+        # if self.args.lr_schedule == '1cycle':
+        #     self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #         self._opt, one_cycle_clr, last_epoch=-1)
+        # elif self.args.lr_schedule == 'triangle_clr':
+        #     self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #         self._opt, triangle_clr, last_epoch=-1)
+        # elif self.args.lr_schedule == 'exp_range_clr':
+        #     self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #         self._opt, exp_range_clr, last_epoch=-1)
+        # elif self.args.lr_schedule == 'decay':
+        #     self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #         self._opt, decay_after_epoch, last_epoch=-1)
+        # elif self.args.lr_schedule == 'expincrease':
+        #     self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #         self._opt, exp_increase_lr, last_epoch=-1)
+        # else:
+        #     self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #         self._opt, constant_lr, last_epoch=-1)
 
-        if self.args.lr_schedule == '1cycle':
-            self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-                self._opt, one_cycle_clr, last_epoch=-1)
-        elif self.args.lr_schedule == 'triangle_clr':
-            self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-                self._opt, triangle_clr, last_epoch=-1)
-        elif self.args.lr_schedule == 'exp_range_clr':
-            self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-                self._opt, exp_range_clr, last_epoch=-1)
-        elif self.args.lr_schedule == 'decay':
-            self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-                self._opt, decay_after_epoch, last_epoch=-1)
-        elif self.args.lr_schedule == 'expincrease':
-            self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-                self._opt, exp_increase_lr, last_epoch=-1)
-        else:
-            self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-                self._opt, constant_lr, last_epoch=-1)
+        self._lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+            self._opt, constant_lr, last_epoch=-1)
 
-        if self.args.distributed_mode == "horovod":
+        if self.args.run.distributed_mode == DistributedMode.horovod:
             self._opt = hvd.DistributedOptimizer(self._opt, named_parameters=self._net.named_parameters())
 
 
@@ -185,7 +188,7 @@ class distributed_trainer(trainercore):
             else:
                 self._global_step = torch.as_tensor(0)
 
-        if self.args.distributed_mode == "horovod":
+        if self.args.run.distributed_mode == DistributedMode.horovod:
 
             # Broadcast the global step:
             self._global_step = hvd.broadcast_object(self._global_step, root_rank = 0)
@@ -197,7 +200,7 @@ class distributed_trainer(trainercore):
             hvd.broadcast_optimizer_state(self._opt, root_rank = 0)
 
             # Horovod doesn't actually move the optimizer onto a GPU:
-            if self.args.compute_mode == "GPU":
+            if self.args.run.compute_mode == ComputeMode.GPU:
                 for state in self._opt.state.values():
                     for k, v in state.items():
                         if torch.is_tensor(v):
@@ -208,7 +211,7 @@ class distributed_trainer(trainercore):
             # Broadcast the LR Schedule state:
             state_dict = hvd.broadcast_object(self._lr_scheduler.state_dict(), root_rank = 0)
 
-        elif self.args.distributed_mode == "DDP":
+        elif self.args.run.distributed_mode == DistributedMode.DDP:
 
             # print(f"{self._rank}: next(self._net.parameters()).device: { next(self._net.parameters()).device}")
             # print(f"{self._rank}: pre type(self._net): {type(self._net)}")
@@ -223,7 +226,7 @@ class distributed_trainer(trainercore):
             )
 
             # If using GPUs, move the model to GPU:
-            if self.args.compute_mode == "GPU":
+            if self.args.run.compute_mode == ComputeMode.GPU:
                 for state in self._opt.state.values():
                     for k, v in state.items():
                         if torch.is_tensor(v):
@@ -233,14 +236,13 @@ class distributed_trainer(trainercore):
             # print(self._net.parameters)
 
             self._global_step = MPI.COMM_WORLD.bcast(self._global_step, root=0)
-            if self.args.training:
+            if self.args.mode.name == ModeKind.train:
                 state_dict = MPI.COMM_WORLD.bcast(self._lr_scheduler.state_dict(), root=0)
+
         # Load the state dict:
-        if self.args.training:
+        if self.args.mode.name == ModeKind.train:
             self._lr_scheduler.load_state_dict(state_dict)
 
-        # MPI Barrier to ensure sync:
-        MPI.COMM_WORLD.Barrier()
         return
 
 
@@ -256,10 +258,10 @@ class distributed_trainer(trainercore):
         # Then, it performs an all reduce on all metrics:
         # metrics = trainercore._compute_metrics(self, logits, minibatch_data, loss)
         metrics = trainercore._compute_metrics(self, logits, vertex_data, loss, plane_to_losses)
-        if self.args.distributed_mode == "horovod":
+        if self.args.run.distributed_mode == DistributedMode.horovod:
             for key in metrics:
                 metrics[key] = hvd.allreduce(metrics[key], name = key)
-        elif self.args.distributed_mode == "DDP":
+        elif self.args.run.distributed_mode == DistributedMode.DDP:
             for key in metrics:
                 torch.distributed.all_reduce(metrics[key])
                 metrics[key] /= self._size
@@ -276,7 +278,7 @@ class distributed_trainer(trainercore):
     def default_device_context(self):
 
         # Convert the input data to torch tensors
-        if self.args.compute_mode == "GPU":
+        if self.args.run.compute_mode == ComputeMode.GPU:
             if 'CUDA_VISIBLE_DEVICES' in os.environ:
                 # Then, it's manually set, use it
                 return torch.cuda.device(0)
@@ -288,7 +290,7 @@ class distributed_trainer(trainercore):
 
     def default_device(self):
 
-        if self.args.compute_mode == "GPU":
+        if self.args.run.compute_mode == ComputeMode.GPU:
             if 'CUDA_VISIBLE_DEVICES' in os.environ:
                 # Then, it's manually set, use it
                 return torch.device("cuda:0")
