@@ -2,7 +2,6 @@ import os
 import tempfile
 import sys
 import time, datetime
-from collections import OrderedDict
 
 import numpy
 
@@ -146,8 +145,6 @@ class trainercore(object):
 
             self.score_cut = torch.tensor(0.5, device=self.default_device())
 
-            print(self.score_cut)
-
             n_trainable_parameters = 0
             for var in self._net.parameters():
                 n_trainable_parameters += numpy.prod(var.shape)
@@ -182,6 +179,7 @@ class trainercore(object):
 
 
     def init_optimizer(self):
+
 
         # Create an optimizer:
         if self.args.optimizer == "SDG":
@@ -250,13 +248,27 @@ class trainercore(object):
                 if line.startswith("latest: "):
                     chkp_file = line.replace("latest: ", "").rstrip('\n')
                     chkp_file = os.path.dirname(checkpoint_file_path) + "/" + chkp_file
-                    logger.info("Restoring weights from ", chkp_file)
+                    logger.info(f"Restoring weights from {chkp_file}")
                     break
+
 
         if self.args.compute_mode == "CPU":
             state = torch.load(chkp_file, map_location='cpu')
         else:
             state = torch.load(chkp_file)
+
+        # I don't understand why torch is doing this.  But rank 0, in DDP,
+        # Will add 'module.' to the beginning of every parameter...
+        new_state_dict = {}
+        for key in state['state_dict']:
+            if key.startswith("module."):
+                new_key = key.replace("module.", "")
+                # print(f"replacing {key} with {new_key}")
+            else:
+                new_key = key
+            new_state_dict[new_key] = state['state_dict'][key]
+
+        state['state_dict'] = new_state_dict
 
         return state
 
@@ -845,7 +857,6 @@ class trainercore(object):
 
             # Run a forward pass of the model on the input image:
             logits = self._net(minibatch_data['image'])
-            # print('Output shape', logits.shape)
 
             vertex_data, vertex_mask = self._target_to_yolo(target=minibatch_data['vertex'],
                                                             logits=logits)

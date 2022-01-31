@@ -209,11 +209,27 @@ class distributed_trainer(trainercore):
             state_dict = hvd.broadcast_object(self._lr_scheduler.state_dict(), root_rank = 0)
 
         elif self.args.distributed_mode == "DDP":
+
+            # print(f"{self._rank}: next(self._net.parameters()).device: { next(self._net.parameters()).device}")
+            # print(f"{self._rank}: pre type(self._net): {type(self._net)}")
             self._net.to(self.default_device())
 
             # print(self._net.parameters)
 
-            self._net = torch.nn.parallel.DistributedDataParallel(self._net, find_unused_parameters=False)
+            self._net = torch.nn.parallel.DistributedDataParallel(
+                module = self._net,
+                # find_unused_parameters = True,
+                # static_graph = True,
+            )
+
+            # If using GPUs, move the model to GPU:
+            if self.args.compute_mode == "GPU":
+                for state in self._opt.state.values():
+                    for k, v in state.items():
+                        if torch.is_tensor(v):
+                            state[k] = v.to(self.default_device())
+
+            # print(f"{self._rank}: post type(self._net): {type(self._net)}")
             # print(self._net.parameters)
 
             self._global_step = MPI.COMM_WORLD.bcast(self._global_step, root=0)
@@ -223,7 +239,8 @@ class distributed_trainer(trainercore):
         if self.args.training:
             self._lr_scheduler.load_state_dict(state_dict)
 
-
+        # MPI Barrier to ensure sync:
+        MPI.COMM_WORLD.Barrier()
         return
 
 

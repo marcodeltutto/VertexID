@@ -72,7 +72,7 @@ The most commonly used commands are:
 
             # Add a file handler too:
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            self.args.log_directory = self.args.log_directory + '/' + time_str
+            # self.args.log_directory = self.args.log_directory + '/' + time_str
             pathlib.Path(self.args.log_directory).mkdir(parents=True, exist_ok=True)
             log_file = self.args.log_directory + "/process.log"
 
