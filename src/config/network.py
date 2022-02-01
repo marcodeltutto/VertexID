@@ -13,11 +13,10 @@ class Yolo:
     name:                str  = "yolo"
     bias:                bool = True
     batch_norm:          bool = True
-    n_initial_filters:    int = 16
-    blocks_per_layer:     int = 2
-    blocks_deepest_layer: int = 5
-    blocks_final:         int = 5
-    network_depth:        int = 6
+    n_initial_filters:    int = 32
+    filter_size:          int = 5
+    kernel_size:          int = 3
+    # n_core_blocks:        int = 5
     residual:            bool = True
     yolo_num_classes:     int = 1
     # yolo_anchors:        int = [(116, 90), (156, 198), (373, 326)]

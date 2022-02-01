@@ -2,33 +2,6 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from . network_config import network_config, str2bool
-
-
-# class YOLOFlags(network_config):
-#     '''
-#     This class contains all the
-#     flags needed for the network
-#     '''
-#
-#     def __init__(self):
-#         network_config.__init__(self)
-#         self._name = "yolo"
-#         self._help = "yolov3 network"
-#
-#     def build_parser(self, network_parser):
-#         # this_parser = network_parser
-#         this_parser = network_parser.add_parser(self._name, help=self._help)
-#
-#         this_parser.add_argument("--yolo-anchors",
-#             type    = list,
-#             default = [(116,90),  (156,198),  (373,326)],
-#             help    = "The anchors")
-#         this_parser.add_argument("--yolo-num-classes",
-#             type    = int,
-#             default = 2,
-#             help    = "The number of classes")
-#
 
 
 
@@ -140,13 +113,11 @@ class ResidualBlock(nn.Module):
             out = self.bn1(out)
 
         out = self.conv2(out)
-
         if self.batch_norm:
             out = self.bn2(out)
 
         # out = self.activ(out + residual)
         out = self.activ(out) + self.activ(residual)
-
         return out
 
 
@@ -155,13 +126,21 @@ class ResidualBlockSeries(torch.nn.Module):
     A series of residual blocks
     '''
 
-    def __init__(self, n, n_blocks, infilters, outfilters1, outfilters2, padding=1, batch_norm=False, activation='leaky'):
+    def __init__(self, n_blocks, infilters, outfilters1, outfilters2, padding=1, batch_norm=False, activation='leaky'):
         torch.nn.Module.__init__(self)
 
-        self.blocks = [ ResidualBlock(infilters, outfilters1, outfilters2, padding, batch_norm, activation) for i in range(n_blocks) ]
-
-        for i, block in enumerate(self.blocks):
-            self.add_module('resblock_{}_{}'.format(n, i), block)
+        self.blocks = torch.nn.ModuleList()
+        for i in range(n_blocks):
+            self.blocks.append(
+                ResidualBlock(
+                    infilters,
+                    outfilters1,
+                    outfilters2,
+                    padding,
+                    batch_norm,
+                    activation
+                )
+            )
 
 
     def forward(self, x):
@@ -311,25 +290,23 @@ def filter_increase(n_filters):
 
 class YOLO(nn.Module):
 
-    def __init__(self, input_shape, args=None):
+    def __init__(self, input_shape, anchors, args):
         torch.nn.Module.__init__(self)
         # All of the parameters are controlled via the args module
 
         # self.nplanes    = args.nplanes
         # self.label_mode = args.label_mode
 
+        print(args)
+
         self.input_shape = input_shape
         # self.anchors = args.yolo_anchors
-        self.anchors = [(116, 90), (156, 198), (373, 326)]
-        self.num_classes = args.network.yolo_num_classes
+        self.anchors = anchors
+        self.num_classes = args.yolo_num_classes
 
-        self._x_yolo = None
-
-        # if args.compute_mode == "CPU": self._cuda = False
-        # else: self._cuda = True
 
         prev_filters = 1 #3
-        n_filters = 32
+        n_filters = args.n_initial_filters
 
         #
         # First convolutional block
@@ -349,12 +326,12 @@ class YOLO(nn.Module):
         # it means that the first residial block is done
         # only one time, the second 2 times, the third 8 times,
         # and so on...
-        blocks_multiplicity = [1, 2, 8, 8, 4]
+        self.blocks_multiplicity = [1, 2, 8, 8, 4]
 
         # This is the number of downsampling/res blocks
         # that we have in the network, 5 in the case of
         # original yolo
-        self.n_core_blocks = 5
+        # self.n_core_blocks = args.n_core_blocks
 
         self.dowsample = []
         self.residual = []
@@ -362,27 +339,35 @@ class YOLO(nn.Module):
         #
         # Downsampling and residual blocks
         #
-        for i in range(0, self.n_core_blocks):
+        self.downsample = torch.nn.ModuleList()
+        self.residual   = torch.nn.ModuleList()
+
+        # for i in range(0, self.n_core_blocks): # seems like this should loop over self.blocks_multiplicity
+        for i in range(len(self.blocks_multiplicity)):
 
             # Downlsampling block
-            self.dowsample.append(Block(infilters=prev_filters,
-                                        outfilters=n_filters,
-                                        kernel=3,
-                                        stride=2,
-                                        padding=1,
-                                        batch_norm=True,
-                                        activation='leaky'))
-
-            self.add_module("downsample_{}".format(i), self.dowsample[-1])
+            self.downsample.append(
+                Block(
+                    infilters  = prev_filters,
+                    outfilters = n_filters,
+                    kernel     = args.kernel_size,
+                    stride     = 2,
+                    padding    = 1,
+                    batch_norm = args.batch_norm,
+                    activation = 'leaky'
+                )
+            )
 
             # Residual block series
-            self.residual.append(ResidualBlockSeries(n=i,
-                                                     n_blocks=blocks_multiplicity[i],
-                                                     infilters=n_filters,
-                                                     outfilters1=prev_filters,
-                                                     outfilters2=n_filters))
+            self.residual.append(
+                ResidualBlockSeries(
+                    # n           = i, # This argument didn't do anything ...
+                    n_blocks    = self.blocks_multiplicity[i],
+                    infilters   = n_filters,
+                    outfilters1 = prev_filters,
+                    outfilters2 = n_filters))
 
-            self.add_module("resblock_{}".format(i), self.residual[-1])
+            # self.add_module("resblock_{}".format(i), self.residual[-1])
 
             prev_filters = n_filters
             n_filters = filter_increase(n_filters)
@@ -399,14 +384,14 @@ class YOLO(nn.Module):
         # activation = ['leaky', 'leaky', 'leaky', 'leaky', 'leaky', 'leaky', 'linear']
 
         # Just one last bottleneck layer
-        batch_normalize = [True] * 1
+        batch_normalize = [args.batch_norm] * 1
         pad = [1] * 1
         stride = [1] * 1
         filter_sizes = [5]
         kernel_size = [3]
         activation = ['leaky']
 
-        self.convolution_blocks_1 = []
+        self.convolution_blocks_1 = torch.nn.ModuleList()
 
         for i in range(0, len(filter_sizes)):
 
@@ -420,7 +405,7 @@ class YOLO(nn.Module):
 
             prev_filters = filter_sizes[i]
 
-            self.add_module("convolution_block_1_{}".format(i), self.convolution_blocks_1[-1])
+            # self.add_module("convolution_block_1_{}".format(i), self.convolution_blocks_1[-1])
 
 
         self.yololayer_1 = YOLOBlock(inp_dim_w=self.input_shape[1],
@@ -443,8 +428,8 @@ class YOLO(nn.Module):
         x = tuple(self.initial_convolution(_x) for _x in x)
         # print('after initial_convolution', x[0].size())
 
-        for i in range(0, self.n_core_blocks):
-            x = tuple(self.dowsample[i](_x) for _x in x)
+        for i in range(len(self.blocks_multiplicity)):
+            x = tuple(self.downsample[i](_x) for _x in x)
             # print(i, 'after dowsample', x[0].size())
             x = tuple(self.residual[i](_x) for _x in x)
             # print(i, 'after residual', x[0].size())
