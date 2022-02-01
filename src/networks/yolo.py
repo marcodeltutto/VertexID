@@ -5,30 +5,30 @@ import numpy as np
 from . network_config import network_config, str2bool
 
 
-class YOLOFlags(network_config):
-    '''
-    This class contains all the
-    flags needed for the network
-    '''
-
-    def __init__(self):
-        network_config.__init__(self)
-        self._name = "yolo"
-        self._help = "yolov3 network"
-
-    def build_parser(self, network_parser):
-        # this_parser = network_parser
-        this_parser = network_parser.add_parser(self._name, help=self._help)
-
-        this_parser.add_argument("--yolo-anchors",
-            type    = list,
-            default = [(116,90),  (156,198),  (373,326)],
-            help    = "The anchors")
-        this_parser.add_argument("--yolo-num-classes",
-            type    = int,
-            default = 2,
-            help    = "The number of classes")
-
+# class YOLOFlags(network_config):
+#     '''
+#     This class contains all the
+#     flags needed for the network
+#     '''
+#
+#     def __init__(self):
+#         network_config.__init__(self)
+#         self._name = "yolo"
+#         self._help = "yolov3 network"
+#
+#     def build_parser(self, network_parser):
+#         # this_parser = network_parser
+#         this_parser = network_parser.add_parser(self._name, help=self._help)
+#
+#         this_parser.add_argument("--yolo-anchors",
+#             type    = list,
+#             default = [(116,90),  (156,198),  (373,326)],
+#             help    = "The anchors")
+#         this_parser.add_argument("--yolo-num-classes",
+#             type    = int,
+#             default = 2,
+#             help    = "The number of classes")
+#
 
 
 
@@ -200,7 +200,8 @@ class YOLOBlock(nn.Module):
     A YOLO block
     '''
 
-    def __init__(self, inp_dim_w, inp_dim_h, anchors, num_classes, cuda):
+    # def __init__(self, inp_dim_w, inp_dim_h, anchors, num_classes, cuda):
+    def __init__(self, inp_dim_w, inp_dim_h, anchors, num_classes):
 
         nn.Module.__init__(self)
 
@@ -208,7 +209,7 @@ class YOLOBlock(nn.Module):
         self._inp_dim_h = inp_dim_h
         self._anchors = anchors
         self._num_classes = num_classes
-        self._cuda = cuda
+        # self._cuda = cuda
 
     def predict_transform(self, prediction):
         '''
@@ -318,13 +319,14 @@ class YOLO(nn.Module):
         # self.label_mode = args.label_mode
 
         self.input_shape = input_shape
-        self.anchors = args.yolo_anchors
-        self.num_classes = args.yolo_num_classes
+        # self.anchors = args.yolo_anchors
+        self.anchors = [(116, 90), (156, 198), (373, 326)]
+        self.num_classes = args.network.yolo_num_classes
 
         self._x_yolo = None
 
-        if args.compute_mode == "CPU": self._cuda = False
-        else: self._cuda = True
+        # if args.compute_mode == "CPU": self._cuda = False
+        # else: self._cuda = True
 
         prev_filters = 1 #3
         n_filters = 32
@@ -425,8 +427,9 @@ class YOLO(nn.Module):
                                      inp_dim_h=self.input_shape[2],
                                      anchors=self.anchors,
                                      num_classes=self.num_classes,
-                                     cuda=self._cuda)
-        self.add_module("yololayer_1", self.yololayer_1)
+                                     # cuda=self._cuda
+                                     )
+        # self.add_module("yololayer_1", self.yololayer_1)
 
     def forward(self, x):
 

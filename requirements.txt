@@ -1,1 +1,2 @@
-larcv>=3.4
+larcv>=3.4.0
+hydra-core

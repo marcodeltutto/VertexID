@@ -12,6 +12,7 @@ import logging
 logger = logging.getLogger()
 
 from larcv.config_builder import ConfigBuilder
+from src.config import ImageModeKind
 
 class larcv_fetcher(object):
 
@@ -247,7 +248,7 @@ class larcv_fetcher(object):
 
 
         # Here, do some massaging to convert the input data to another format, if necessary:
-        if self.image_mode == 'dense':
+        if self.image_mode == ImageModeKind.dense:
             # Need to convert sparse larcv into a dense numpy array:
             if self.input_dimension == 3:
                 minibatch_data['image'] = data_transforms.larcvsparse_to_dense_3d(minibatch_data['image'])
@@ -255,18 +256,18 @@ class larcv_fetcher(object):
                 x_dim = int(1536/2**self.downsample_images)
                 y_dim = int(1024/2**self.downsample_images)
                 minibatch_data['image'] = data_transforms.larcvsparse_to_dense_2d(minibatch_data['image'], dense_shape=[x_dim, y_dim])
-        elif self.image_mode == 'sparse':
+        elif self.image_mode == ImageModeKind.sparse:
             # Have to convert the input image from dense to sparse format:
             if self.input_dimension == 3:
                 minibatch_data['image'] = data_transforms.larcvsparse_to_scnsparse_3d(minibatch_data['image'])
             else:
                 minibatch_data['image'] = data_transforms.larcvsparse_to_scnsparse_2d(minibatch_data['image'])
-        elif self.image_mode == 'graph':
-
-            if self.input_dimension == 3:
-                minibatch_data['image'] = data_transforms.larcvsparse_to_pointcloud_3d(minibatch_data['image'])
-            else:
-                minibatch_data['image'] = data_transforms.larcvsparse_to_pointcloud_2d(minibatch_data['image'])
+        # elif self.image_mode == ImageModeKind.graph:
+        #
+        #     if self.input_dimension == 3:
+        #         minibatch_data['image'] = data_transforms.larcvsparse_to_pointcloud_3d(minibatch_data['image'])
+        #     else:
+        #         minibatch_data['image'] = data_transforms.larcvsparse_to_pointcloud_2d(minibatch_data['image'])
 
         else:
             raise Exception("Image Mode not recognized")

@@ -3,6 +3,8 @@ import tempfile
 import sys
 import time, datetime
 
+import pathlib
+
 import numpy
 
 import torch
@@ -21,6 +23,9 @@ from torch.utils.tensorboard import SummaryWriter
 import logging
 logger = logging.getLogger()
 
+
+from src.config import ModeKind, ComputeMode, ImageModeKind
+
 class trainercore(object):
     '''
     This class is the core interface for training.  Each function to
@@ -31,79 +36,87 @@ class trainercore(object):
     def __init__(self, args):
         self.args = args
 
-        if self.args.training:
-            self.mode = 'train'
-        else:
-            self.mode = 'iotest'
 
-        access_mode = "random_blocks" if self.mode == "train" else "serial_access"
-        # access_mode = "serial_access" if self.mode == "train" else "serial_access"
+        if self.args.mode.name == ModeKind.train:
+            self.mode   = 'train'
+            access_mode = "random_blocks"
+        elif self.args.mode.name == ModeKind.iotest:
+            self.mode   = 'iotest'
+            access_mode = "serial_access"
+        elif self.args.mode.name == ModeKind.inference:
+            self.mode   = "inference"
+            access_mode = "serial_access"
 
         logger.info(f"Access mode: {access_mode}")
 
         self.larcv_fetcher = larcv_fetcher.larcv_fetcher(
             mode              = self.mode,
-            distributed       = self.args.distributed,
+            distributed       = self.args.run.distributed,
             access_mode       = access_mode,
-            dimension         = self.args.input_dimension,
-            data_format       = self.args.image_mode,
-            downsample_images = self.args.downsample_images,
+            dimension         = self.args.data.input_dimension,
+            data_format       = self.args.data.image_mode,
+            downsample_images = self.args.data.downsample,
         )
 
-        self.args.image_width = int(self.args.image_width / 2**self.args.downsample_images)
-        self.args.image_height = int(self.args.image_height / 2**self.args.downsample_images)
+        self.args.data.image_width = int(self.args.data.image_width / 2**self.args.data.downsample)
+        self.args.data.image_height = int(self.args.data.image_height / 2**self.args.data.downsample)
 
         self._iteration       = 0
         self._global_step     = -1
         self._rank            = 0
 
-        self._cleanup         = []
-
-
-    def __del__(self):
-        for f in self._cleanup:
-            os.unlink(f.name)
-
 
     def _initialize_io(self, color=0):
 
-        def file_exists(filename, directory):
-            return pathlib.Path(directory + filename).exists()
 
+
+        f     = pathlib.Path(self.args.data.data_directory + self.args.data.file)
+        aux_f = pathlib.Path(self.args.data.data_directory + self.args.data.aux_file)
+
+        # Check that the training file exists:
+        if not f.exists():
+            raise Exception(f"Can not continue with file {f} - does not exist.")
+        if not aux_f.exists():
+            if self.args.mode.name == ModeKind.train:
+                logger.warning("WARNING: Aux file does not exist.  Setting to None for training")
+                self.args.data.aux_file = None
+            else:
+                # In inference mode, we are creating the aux file.  So we need to check
+                # that the directory exists.  Otherwise, no writing.
+                if not aux_f.parent.exists():
+                    logger.warning("WARNING: Aux file's directory does not exist.")
+                    self.args.data.aux_file = None
+                elif self.args.data.aux_file is None or str(self.args.data.aux_file).lower() == "none":
+                    logger.warning("WARNING: no aux file set, so not writing inference results.")
+                    self.args.data.aux_file = None
 
         configured_keys = []
+        configured_keys += ["primary",]
 
-
-        # If mode is train, prepare the train file.
-        if self.mode == "train" or self.mode == "iotest":
-            # if not os.path.exists(self.args.file):
-            #     raise Exception(f"File {self.args.file} not found")
-
-            # Prepare the training sample:
-            self._train_data_size = self.larcv_fetcher.prepare_sample(
-                name            = "primary",
-                input_file      = self.args.file,
-                batch_size      = self.args.minibatch_size,
-                color           = color,
-                print_config    = False # True if self._rank == 0 else False
-            )
-
-            configured_keys += ["primary",]
-
-            # If the validation file exists, load that too:
-            if self.args.aux_file is not None:
-
+        self._train_data_size = self.larcv_fetcher.prepare_sample(
+            name            = "primary",
+            input_file      = str(f),
+            batch_size      = self.args.run.minibatch_size,
+            color           = color,
+            print_config    = False # True if self._rank == 0 else False
+        )
+        if aux_f.exists():
+            if self.args.mode.name == ModeKind.train:
+                # Fetching data for on the fly testing:
                 self._val_data_size = self.larcv_fetcher.prepare_sample(
                     name            = "val",
-                    input_file      = self.args.aux_file,
-                    batch_size      = self.args.aux_minibatch_size,
+                    input_file      = str(aux_f),
+                    batch_size      = self.args.run.minibatch_size,
                     color           = color,
                     print_config    = False # True if self._rank == 0 else False
                 )
                 configured_keys += ["val",]
+            elif self.args.mode == "inference":
+                pass
+                # self._aux_data_size = self.larcv_fetcher.prepare_writer(
+                #     input_file = f, output_file = str(aux_f))
 
-        elif self.mode == "inference":
-            pass
+
 
         return configured_keys
 
@@ -114,19 +127,19 @@ class trainercore(object):
         input_shape = self.larcv_fetcher.input_shape('primary')
 
         # Override the shape as we are going to use dense images
-        input_shape = [input_shape[0], self.args.image_width, self.args.image_height]
+        input_shape = [input_shape[0], self.args.data.image_width, self.args.data.image_height]
 
         logger.info(f"Input shape: {input_shape}")
 
         # To initialize the network, we see what the name is
         # and act on that:
-        if self.args.network == "yolo":
-            from src.networks import yolo
-            self._net = yolo.YOLO(input_shape, self.args)
-        else:
-            raise Exception(f"Couldn't identify network {self.args.network.name}")
+        # if self.args.network == "yolo":
+        from src.networks import yolo
+        self._net = yolo.YOLO(input_shape, self.args)
+        # else:
+        #     raise Exception(f"Couldn't identify network {self.args.network.name}")
 
-        if self.mode == "train":
+        if self.args.mode.name == ModeKind.train:
             self._net.train(True)
 
         self._net.to(self.default_device())
@@ -156,15 +169,15 @@ class trainercore(object):
 
             state = self.restore_model()
 
-            if not self.args.distributed:
+            if not self.args.run.distributed:
                 if state is not None:
                     self.load_state(state)
                 else:
                     self._global_step = 0
 
-            # if self.args.compute_mode == "CPU":
+            # if self.args.run.compute_mode == "CPU":
             #     pass
-            # if self.args.compute_mode == "GPU":
+            # if self.args.run.compute_mode == ComputeMode.GPU:
             #     self._net.cuda()
 
             # if self.args.label_mode == 'all':
@@ -180,14 +193,15 @@ class trainercore(object):
 
     def init_optimizer(self):
 
+        from src.config import OptimizerKind
 
         # Create an optimizer:
-        if self.args.optimizer == "SDG":
-            self._opt = torch.optim.SGD(self._net.parameters(), lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay)
-        else:
-            self._opt = torch.optim.Adam(self._net.parameters(), lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay)
+        if self.args.mode.optimizer.name == OptimizerKind.SGD:
+            self._opt = torch.optim.SGD(self._net.parameters(), lr=self.args.mode.optimizer.learning_rate,
+                weight_decay=self.args.mode.optimizer.weight_decay)
+        elif self.args.mode.optimizer.name == OptimizerKind.Adam:
+            self._opt = torch.optim.Adam(self._net.parameters(), lr=self.args.mode.optimizer.learning_rate,
+                weight_decay=self.args.mode.optimizer.weight_decay)
 
 
         def constant_lr(step):
@@ -216,18 +230,17 @@ class trainercore(object):
 
     def init_saver(self):
 
-        save_dir = self.args.log_directory
+        save_dir = self.args.output_dir
 
         # This sets up the summary saver:
-        if self.args.training:
+        if self.args.mode.name == ModeKind.train:
             self._saver = SummaryWriter(save_dir)
 
 
-        if self.args.aux_file is not None and self.args.training:
+        if self.args.data.aux_file is not None and self.args.mode.name == ModeKind.train:
             self._aux_saver = SummaryWriter(save_dir + "/test/")
-        elif self.args.aux_file is not None and not self.args.training:
+        elif self.args.data.aux_file is not None and not self.args.mode.name == ModeKind.train:
             self._aux_saver = SummaryWriter(save_dir + "/val/")
-
         else:
             self._aux_saver = None
 
@@ -252,7 +265,7 @@ class trainercore(object):
                     break
 
 
-        if self.args.compute_mode == "CPU":
+        if self.args.run.compute_mode == ComputeMode.CPU:
             state = torch.load(chkp_file, map_location='cpu')
         else:
             state = torch.load(chkp_file)
@@ -281,7 +294,7 @@ class trainercore(object):
         self._global_step = state['global_step']
 
         # If using GPUs, move the model to GPU:
-        if self.args.compute_mode == "GPU":
+        if self.args.run.compute_mode == ComputeMode.GPU:
             for state in self._opt.state.values():
                 for k, v in state.items():
                     if torch.is_tensor(v):
@@ -347,10 +360,7 @@ class trainercore(object):
         '''
 
         # Find the base path of the log directory
-        if self.args.checkpoint_directory == None:
-            file_path= self.args.log_directory  + "/checkpoints/"
-        else:
-            file_path= self.args.checkpoint_directory  + "/checkpoints/"
+        file_path= self.args.output_dir  + "/checkpoints/"
 
 
         name = file_path + 'model-{}.ckpt'.format(self._global_step)
@@ -370,8 +380,8 @@ class trainercore(object):
         y_min = -100 # cm
         y_max = 100 # cm
 
-        dim_x = 1536 / 2**self.args.downsample_images
-        dim_y = 1024 / 2**self.args.downsample_images
+        dim_x = 1536 / 2**self.args.data.downsample
+        dim_y = 1024 / 2**self.args.data.downsample
 
         plane_to_theta = {0: 35.7, 1: -35.7, 2: 0}
         theta = plane_to_theta[plane]
@@ -416,9 +426,9 @@ class trainercore(object):
             target_out = []
             mask = []
 
-            pitch = 0.4 * 2**self.args.downsample_images
-            padding_x = 286 / 2**self.args.downsample_images
-            padding_y = 124 / 2**self.args.downsample_images
+            pitch = 0.4 * 2**self.args.data.downsample
+            padding_x = 286 / 2**self.args.data.downsample
+            padding_y = 124 / 2**self.args.data.downsample
 
             batch_size = target.size(0)
 
@@ -436,8 +446,8 @@ class trainercore(object):
                 target_out_p = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels, device=self.default_device())
                 mask_p = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool, device=self.default_device())
 
-                step_w = self.args.image_width / grid_size_w
-                step_h = self.args.image_height / grid_size_h
+                step_w = self.args.data.image_width / grid_size_w
+                step_h = self.args.data.image_height / grid_size_h
 
                 # print('vertex x', target[0, 2], 'y', target[0, 0])
                 # print('vertex x', (target[0, 2]/pitch + padding_x/2), 'y', (target[0, 0]/pitch + padding_y/2))
@@ -470,7 +480,7 @@ class trainercore(object):
 
                 # print('target_out_p', target_out_p)
                 if self._global_step % 25 == 0:
-                    if not self.args.distributed or self._rank == 0:
+                    if not self.args.run.distributed or self._rank == 0:
                         numpy.save(f'yolo_tgt_{plane}', target_out_p.cpu())
 
                 target_out.append(target_out_p)
@@ -637,9 +647,9 @@ class trainercore(object):
             y_targ = target[mask_targ][:,1]
 
             if self._global_step % 25 == 0:
-                if not self.args.distributed or self._rank == 0:
-                    numpy.save('xypred', numpy.array([x_pred.detach().cpu().float(), y_pred.detach().cpu().float()]))
-                    numpy.save('xytarg', numpy.array([x_targ.detach().cpu().float(), y_targ.detach().cpu().float()]))
+                if not self.args.run.distributed or self._rank == 0:
+                    numpy.save('xypred', numpy.array([x_pred.detach().cpu().numpy(), y_pred.detach().cpu().numpy()]))
+                    numpy.save('xytarg', numpy.array([x_targ.detach().cpu().numpy(), y_targ.detach().cpu().numpy()]))
 
             grid_size_w = prediction.size(1)
             grid_size_h = prediction.size(2)
@@ -698,7 +708,7 @@ class trainercore(object):
 
     def default_device_context(self):
 
-        if self.args.compute_mode == "GPU":
+        if self.args.run.compute_mode == ComputeMode.GPU:
             return torch.cuda.device(0)
         else:
             return contextlib.nullcontext
@@ -706,7 +716,7 @@ class trainercore(object):
 
     def default_device(self):
 
-        if self.args.compute_mode == "GPU":
+        if self.args.run.compute_mode == ComputeMode.GPU:
             return torch.device("cuda")
         else:
             device = torch.device('cpu')
@@ -714,7 +724,7 @@ class trainercore(object):
 
     def log(self, metrics, saver=''):
 
-        if self._global_step % self.args.logging_iteration == 0:
+        if self._global_step % self.args.mode.logging_iteration == 0:
 
             self._current_log_time = datetime.datetime.now()
 
@@ -756,7 +766,7 @@ class trainercore(object):
         if self._saver is None:
             return
 
-        if self._global_step % self.args.summary_iteration == 0:
+        if self._global_step % self.args.mode.summary_iteration == 0:
             for metric in metrics:
                 name = metric
                 if saver == "test":
@@ -776,9 +786,9 @@ class trainercore(object):
 
     def increment_global_step(self):
 
-        previous_epoch = int((self._global_step * self.args.minibatch_size) / self._train_data_size)
+        previous_epoch = int((self._global_step * self.args.run.minibatch_size) / self._train_data_size)
         self._global_step += 1
-        current_epoch = int((self._global_step * self.args.minibatch_size) / self._train_data_size)
+        current_epoch = int((self._global_step * self.args.run.minibatch_size) / self._train_data_size)
 
         self.on_step_end()
 
@@ -803,7 +813,7 @@ class trainercore(object):
             for key in minibatch_data:
                 if key == 'entries' or key =='event_ids':
                     continue
-                if key == 'image' and self.args.image_mode == "sparse":
+                if key == 'image' and self.args.data.image_mode == ImageModeKind.sparse:
                     if self.args.input_dimension == 3:
                         minibatch_data['image'] = (
                                 torch.tensor(minibatch_data['image'][0]).long(),
@@ -816,8 +826,8 @@ class trainercore(object):
                                 torch.tensor(minibatch_data['image'][1], device=device),
                                 minibatch_data['image'][2],
                             )
-                elif key == 'image' and self.args.image_mode == 'graph':
-                    minibatch_data[key] = minibatch_data[key].to(device)
+                # elif key == 'image' and self.args.image_mode == ImageModeKind.graph:
+                #     minibatch_data[key] = minibatch_data[key].to(device)
                 else:
                     minibatch_data[key] = torch.tensor(minibatch_data[key],device=device)
 
@@ -881,7 +891,7 @@ class trainercore(object):
         # Add the global step / second to the tensorboard log:
         try:
             metrics['global_step_per_sec'] = 1./self._seconds_per_global_step
-            metrics['images_per_second'] = self.args.minibatch_size / self._seconds_per_global_step
+            metrics['images_per_second'] = self.args.run.minibatch_size / self._seconds_per_global_step
         except:
             metrics['global_step_per_sec'] = 0.0
             metrics['images_per_second'] = 0.0
@@ -920,10 +930,10 @@ class trainercore(object):
     def val_step(self, n_iterations=1):
 
         # First, validation only occurs on training:
-        if not self.args.training: return
+        if not self.args.mode.name == ModeKind.train : return
 
         # Second, validation can not occur without a validation dataloader.
-        if self.args.aux_file is None: return
+        if self.args.data.aux_file is None: return
 
         # perform a validation step
         # Validation steps can optionally accumulate over several minibatches, to
@@ -933,7 +943,7 @@ class trainercore(object):
 
         with torch.no_grad():
 
-            if self._global_step != 0 and self._global_step % self.args.aux_iteration == 0:
+            if self._global_step != 0 and self._global_step % self.args.run.aux_iteration == 0:
 
 
                 # Fetch the next batch of data with larcv
@@ -970,7 +980,7 @@ class trainercore(object):
 
     def ana_step(self, iteration=None):
 
-        if self.args.training: return
+        if self.args.mode.name == ModeKind.train: return
 
         # Set network to eval mode
         self._net.eval()
@@ -1036,10 +1046,10 @@ class trainercore(object):
 
     def checkpoint(self):
 
-        if self.args.checkpoint_iteration == -1:
+        if self.args.mode.checkpoint_iteration == -1:
             return
 
-        if self._global_step % self.args.checkpoint_iteration == 0 and self._global_step != 0:
+        if self._global_step % self.args.mode.checkpoint_iteration == 0 and self._global_step != 0:
             # Save a checkpoint, but don't do it on the first pass
             self.save_model()
 
@@ -1049,26 +1059,26 @@ class trainercore(object):
         # This is the 'master' function, so it controls a lot
 
         # If we're not training, force the number of iterations to the epoch size or less
-        if not self.args.training:
+        if not self.args.mode.name == ModeKind.train:
             if self.args.iterations > int(self._train_data_size/self.args.minibatch_size) + 1:
                 self.args.iterations = int(self._train_data_size/self.args.minibatch_size) + 1
                 logger.info('Number of iterations set to', self.args.iterations)
 
         # Run iterations
-        for i in range(self.args.iterations):
-            if self.args.training and self._iteration >= self.args.iterations:
+        for i in range(self.args.run.iterations):
+            if self.args.mode.name == ModeKind.train and self._iteration >= self.args.run.iterations:
                 logger.info('Finished training (iteration %d)' % self._iteration)
                 self.checkpoint()
                 break
 
-            if self.args.training:
+            if self.args.mode.name == ModeKind.train:
                 self.val_step()
                 self.train_step()
                 self.checkpoint()
             else:
                 self.ana_step(i)
 
-        if self.args.training:
+        if self.args.mode.name == ModeKind.train:
             if self._saver is not None:
                 self._saver.close()
             if self._aux_saver is not None:

@@ -1,18 +1,17 @@
 from enum import Enum
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hydra.core.config_store import ConfigStore
+from typing import List, Any
 from omegaconf import MISSING
 
-from .network   import Network
+from .network   import Yolo
 from .mode      import Mode
-from .framework import Framework
 from .data      import Data
 
 class ComputeMode(Enum):
     CPU   = 0
     GPU   = 1
-    DPCPP = 2
 
 class Precision(Enum):
     float32  = 0
@@ -20,19 +19,30 @@ class Precision(Enum):
     bfloat16 = 2
     float16  = 3
 
+class DistributedMode(Enum):
+    horovod = 0
+    DDP     = 1
+
+
+    # yolo_anchors:        int = [(116, 90), (156, 198), (373, 326)]
+
+
+
+
 @dataclass
 class Run:
-    distributed:        bool        = True
-    compute_mode:       ComputeMode = ComputeMode.GPU
-    iterations:         int         = MISSING
-    aux_iterations:     int         = MISSING
-    minibatch_size:     int         = MISSING
-    aux_minibatch_size: int         = MISSING
-    id:                 int         = MISSING
-    precision:          Precision   = Precision.float32
-    profile:            bool        = False
+    distributed:          bool        = True
+    distributed_mode: DistributedMode = DistributedMode.horovod
+    compute_mode:         ComputeMode = ComputeMode.GPU
+    iterations:           int         = 500
+    aux_iteration:        int         = 10
+    minibatch_size:       int         = 2
+    id:                   str         = MISSING
+    precision:            Precision   = Precision.float32
 
+cs = ConfigStore.instance()
 
+cs.store(group="run", name="base_run", node=Run)
 
 cs.store(
     name="disable_hydra_logging",
@@ -40,16 +50,27 @@ cs.store(
     node={"version": 1, "disable_existing_loggers": False, "root": {"handlers": []}},
 )
 
+
+defaults = [
+    {"run"       : "base_run"},
+    {"mode"      : "train"},
+    {"data"      : "data"},
+    {"network"   : "yolo"}
+]
+
 @dataclass
 class Config:
-    defaults: List = field(
-        default_factory=lambda: [
-            {"hydra/job_logging": "disable_hydra_logging"},
-        ]
-    )
-    network:    network.Network     = MISSING
-    framework:  framework.Framework = MISSING
-    dataset:    dataset.Dataset     = MISSING
+    defaults: List[Any] = field(default_factory=lambda: defaults)
+    #         "_self_",
+    #         {"run" : Run()}
+    #     ]
+    # )
 
-cs = ConfigStore.instance()
-cs.store(name="config", node=Config)
+    run:        Run       = MISSING
+    mode:       Mode      = MISSING
+    data:       Any       = MISSING
+    network:    Yolo      = MISSING
+    output_dir: str       = "output/${framework.name}/${network.name}/${run.id}/"
+
+
+cs.store(name="base_config", node=Config)
