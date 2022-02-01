@@ -31,4 +31,7 @@ python bin/exec.py \
 run.distributed=True \
 run.minibatch_size=${MB} \
 data.image_mode=sparse \
-run.id=sparse_yolo-1
+run.iterations=5000 \
+data.aux_file=non \
+data.downsample=0 \
+run.id=sparse_yolo-real

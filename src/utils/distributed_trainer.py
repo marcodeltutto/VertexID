@@ -25,7 +25,7 @@ except:
 
 from .trainercore import trainercore
 
-from src.config import ComputeMode, ModeKind, DistributedMode
+from src.config import ComputeMode, ModeKind, DistributedMode, ImageModeKind
 
 
 
@@ -82,7 +82,11 @@ class distributed_trainer(trainercore):
             os.environ["MASTER_PORT"] = str(2345)
 
             # What backend?  nccl on GPU, gloo on CPU
-            if self.args.run.compute_mode == ComputeMode.GPU: backend = 'nccl'
+            if self.args.run.compute_mode == ComputeMode.GPU:
+                if self.args.data.image_mode == ImageModeKind.dense:
+                    backend = 'nccl'
+                if self.args.data.image_mode == ImageModeKind.sparse:
+                    backend = 'gloo'
             elif self.args.run.compute_mode == ComputeMode.CPU: backend = 'gloo'
 
             torch.distributed.init_process_group(
@@ -196,20 +200,21 @@ class distributed_trainer(trainercore):
             # Broadcast the state of the model:
             hvd.broadcast_parameters(self._net.state_dict(), root_rank = 0)
 
-            # Broadcast the optimizer state:
-            hvd.broadcast_optimizer_state(self._opt, root_rank = 0)
+            if self.is_training():
+                # Broadcast the optimizer state:
+                hvd.broadcast_optimizer_state(self._opt, root_rank = 0)
 
-            # Horovod doesn't actually move the optimizer onto a GPU:
-            if self.args.run.compute_mode == ComputeMode.GPU:
-                for state in self._opt.state.values():
-                    for k, v in state.items():
-                        if torch.is_tensor(v):
-                            state[k] = state[k].to(self.default_device())
+                # Horovod doesn't actually move the optimizer onto a GPU:
+                if self.args.run.compute_mode == ComputeMode.GPU:
+                    for state in self._opt.state.values():
+                        for k, v in state.items():
+                            if torch.is_tensor(v):
+                                state[k] = state[k].to(self.default_device())
 
 
 
-            # Broadcast the LR Schedule state:
-            state_dict = hvd.broadcast_object(self._lr_scheduler.state_dict(), root_rank = 0)
+                # Broadcast the LR Schedule state:
+                state_dict = hvd.broadcast_object(self._lr_scheduler.state_dict(), root_rank = 0)
 
         elif self.args.run.distributed_mode == DistributedMode.DDP:
 
@@ -224,20 +229,21 @@ class distributed_trainer(trainercore):
                 # find_unused_parameters = True,
                 # static_graph = True,
             )
+            if self.is_training():
+                # If using GPUs, move the model to GPU:
+                if self.args.run.compute_mode == ComputeMode.GPU:
+                    for state in self._opt.state.values():
+                        for k, v in state.items():
+                            if torch.is_tensor(v):
+                                state[k] = v.to(self.default_device())
 
-            # If using GPUs, move the model to GPU:
-            if self.args.run.compute_mode == ComputeMode.GPU:
-                for state in self._opt.state.values():
-                    for k, v in state.items():
-                        if torch.is_tensor(v):
-                            state[k] = v.to(self.default_device())
+                if self.args.mode.name == ModeKind.train:
+                    state_dict = MPI.COMM_WORLD.bcast(self._lr_scheduler.state_dict(), root=0)
 
-            # print(f"{self._rank}: post type(self._net): {type(self._net)}")
-            # print(self._net.parameters)
+                # print(f"{self._rank}: post type(self._net): {type(self._net)}")
+                # print(self._net.parameters)
 
             self._global_step = MPI.COMM_WORLD.bcast(self._global_step, root=0)
-            if self.args.mode.name == ModeKind.train:
-                state_dict = MPI.COMM_WORLD.bcast(self._lr_scheduler.state_dict(), root=0)
 
         # Load the state dict:
         if self.args.mode.name == ModeKind.train:
