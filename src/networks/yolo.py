@@ -297,7 +297,6 @@ class YOLO(nn.Module):
         # self.nplanes    = args.nplanes
         # self.label_mode = args.label_mode
 
-        print(args)
 
         self.input_shape = input_shape
         # self.anchors = args.yolo_anchors
