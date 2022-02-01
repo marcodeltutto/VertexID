@@ -12,7 +12,7 @@ from omegaconf import MISSING
 class Yolo:
     name:                str  = "yolo"
     bias:                bool = True
-    batch_norm:          bool = True
+    batch_norm:          bool = False
     n_initial_filters:    int = 32
     filter_size:          int = 5
     kernel_size:          int = 3

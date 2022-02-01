@@ -79,16 +79,16 @@ class trainercore(object):
         if not aux_f.exists():
             if self.args.mode.name == ModeKind.train:
                 logger.warning("WARNING: Aux file does not exist.  Setting to None for training")
-                self.args.data.aux_file = None
+                # self.args.data.aux_file = None
             else:
                 # In inference mode, we are creating the aux file.  So we need to check
                 # that the directory exists.  Otherwise, no writing.
                 if not aux_f.parent.exists():
                     logger.warning("WARNING: Aux file's directory does not exist.")
-                    self.args.data.aux_file = None
+                    # self.args.data.aux_file = None
                 elif self.args.data.aux_file is None or str(self.args.data.aux_file).lower() == "none":
                     logger.warning("WARNING: no aux file set, so not writing inference results.")
-                    self.args.data.aux_file = None
+                    # self.args.data.aux_file = None
 
         configured_keys = []
         configured_keys += ["primary",]
@@ -115,7 +115,8 @@ class trainercore(object):
                 pass
                 # self._aux_data_size = self.larcv_fetcher.prepare_writer(
                 #     input_file = f, output_file = str(aux_f))
-
+        else:
+            self._val_data_size = 0
 
 
         return configured_keys
@@ -137,10 +138,10 @@ class trainercore(object):
         anchors = [(116, 90), (156, 198), (373, 326)]
         if self.args.data.image_mode == ImageModeKind.dense:
             from src.networks import yolo
-            self._net = yolo.YOLO(input_shape, self.args)
+            self._net = yolo.YOLO(input_shape, anchors, self.args.network)
         elif self.args.data.image_mode == ImageModeKind.sparse:
             from src.networks import sparse_yolo
-            self._net = sparse_yolo.YOLO(input_shape, self.args)
+            self._net = sparse_yolo.YOLO(input_shape, anchors, self.args.network)
         # else:
         #     raise Exception(f"Couldn't identify network {self.args.network.name}")
 
@@ -168,6 +169,7 @@ class trainercore(object):
                 n_trainable_parameters += numpy.prod(var[1].shape)
                 # logger.info(f"  var: {var[0]} with shape {var[1].shape} and {numpy.prod(var[1].shape)} parameters.")
             logger.info("Total number of trainable parameters in this network: {}".format(n_trainable_parameters))
+
 
             self.init_optimizer()
 
@@ -243,9 +245,9 @@ class trainercore(object):
             self._saver = SummaryWriter(save_dir)
 
 
-        if self.args.data.aux_file is not None and self.args.mode.name == ModeKind.train:
+        if self._val_data_size != 0 and self.args.mode.name == ModeKind.train:
             self._aux_saver = SummaryWriter(save_dir + "/test/")
-        elif self.args.data.aux_file is not None and not self.args.mode.name == ModeKind.train:
+        elif self._val_data_size != 0 and not self.args.mode.name == ModeKind.train:
             self._aux_saver = SummaryWriter(save_dir + "/val/")
         else:
             self._aux_saver = None
@@ -485,9 +487,9 @@ class trainercore(object):
                     # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
 
                 # print('target_out_p', target_out_p)
-                if self._global_step % 25 == 0:
-                    if not self.args.run.distributed or self._rank == 0:
-                        numpy.save(f'yolo_tgt_{plane}', target_out_p.cpu())
+                # if self._global_step % 25 == 0:
+                #     if not self.args.run.distributed or self._rank == 0:
+                #         numpy.save(f'yolo_tgt_{plane}', target_out_p.cpu())
 
                 target_out.append(target_out_p)
                 mask.append(mask_p)
@@ -652,10 +654,10 @@ class trainercore(object):
             x_targ = target[mask_targ][:,0]
             y_targ = target[mask_targ][:,1]
 
-            if self._global_step % 25 == 0:
-                if not self.args.run.distributed or self._rank == 0:
-                    numpy.save('xypred', numpy.array([x_pred.detach().cpu().float(), y_pred.detach().cpu().float()]))
-                    numpy.save('xytarg', numpy.array([x_targ.detach().cpu().float(), y_targ.detach().cpu().float()]))
+            # if self._global_step % 25 == 0:
+            #     if not self.args.run.distributed or self._rank == 0:
+            #         numpy.save('xypred', numpy.array([x_pred.detach().cpu().float(), y_pred.detach().cpu().float()]))
+            #         numpy.save('xytarg', numpy.array([x_targ.detach().cpu().float(), y_targ.detach().cpu().float()]))
 
             grid_size_w = prediction.size(1)
             grid_size_h = prediction.size(2)
@@ -857,10 +859,10 @@ class trainercore(object):
         io_start_time = datetime.datetime.now()
         minibatch_data = self.larcv_fetcher.fetch_next_batch("primary", force_pop=True)
         io_end_time = datetime.datetime.now()
-
-        if self._global_step % 25 == 0 and self._rank == 0:
-            numpy.save("img",minibatch_data['image'])
-            numpy.save("vtx",minibatch_data['vertex'])
+        
+        # if self._global_step % 25 == 0 and self._rank == 0:
+        #     numpy.save("img",minibatch_data['image'])
+        #     numpy.save("vtx",minibatch_data['vertex'])
 
         minibatch_data = self.to_torch(minibatch_data)
 
@@ -939,7 +941,7 @@ class trainercore(object):
         if not self.args.mode.name == ModeKind.train : return
 
         # Second, validation can not occur without a validation dataloader.
-        if self.args.data.aux_file is None: return
+        if self._val_data_size == 0: return
 
         # perform a validation step
         # Validation steps can optionally accumulate over several minibatches, to

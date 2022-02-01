@@ -315,7 +315,7 @@ class YOLO(nn.Module):
                                          kernel=3,
                                          stride=1,
                                          padding=1,
-                                         batch_norm=True,
+                                         batch_norm=args.batch_norm,
                                          activation='leaky')
         prev_filters = n_filters
         n_filters = filter_increase(n_filters)
@@ -332,8 +332,6 @@ class YOLO(nn.Module):
         # original yolo
         # self.n_core_blocks = args.n_core_blocks
 
-        self.dowsample = []
-        self.residual = []
 
         #
         # Downsampling and residual blocks
@@ -423,22 +421,22 @@ class YOLO(nn.Module):
         self.nplanes = 3
         x = torch.chunk(x, chunks=self.nplanes, dim=1)
 
-        # print('initial', x[0].size())
+        print('initial', x[0].size())
         x = tuple(self.initial_convolution(_x) for _x in x)
-        # print('after initial_convolution', x[0].size())
+        print('after initial_convolution', x[0].size())
 
         for i in range(len(self.blocks_multiplicity)):
             x = tuple(self.downsample[i](_x) for _x in x)
-            # print(i, 'after dowsample', x[0].size())
+            print(i, 'after downsample', x[0].size())
             x = tuple(self.residual[i](_x) for _x in x)
-            # print(i, 'after residual', x[0].size())
+            print(i, 'after residual', x[0].size())
 
         for i in range(0, len(self.convolution_blocks_1)):
             x = tuple(self.convolution_blocks_1[i](_x) for _x in x)
-            # print(i, 'after convolution_blocks_1', x[0].size())
+            print(i, 'after convolution_blocks_1', x[0].size())
 
 
         x = tuple(self.yololayer_1(_x) for _x in x)
-        # print('after yolo_1', x[0].size())
+        print('after yolo_1', x[0].size())
 
         return x
