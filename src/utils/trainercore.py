@@ -134,18 +134,13 @@ class trainercore(object):
         # To initialize the network, we see what the name is
         # and act on that:
         # if self.args.network == "yolo":
-<<<<<<< HEAD
+        anchors = [(116, 90), (156, 198), (373, 326)]
         if self.args.data.image_mode == ImageModeKind.dense:
             from src.networks import yolo
             self._net = yolo.YOLO(input_shape, self.args)
         elif self.args.data.image_mode == ImageModeKind.sparse:
             from src.networks import sparse_yolo
             self._net = sparse_yolo.YOLO(input_shape, self.args)
-=======
-        anchors = [(116, 90), (156, 198), (373, 326)]
-        from src.networks import yolo
-        self._net = yolo.YOLO(input_shape, anchors, self.args.network)
->>>>>>> hydra-config
         # else:
         #     raise Exception(f"Couldn't identify network {self.args.network.name}")
 
