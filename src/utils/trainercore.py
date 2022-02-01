@@ -134,8 +134,9 @@ class trainercore(object):
         # To initialize the network, we see what the name is
         # and act on that:
         # if self.args.network == "yolo":
+        anchors = [(116, 90), (156, 198), (373, 326)]
         from src.networks import yolo
-        self._net = yolo.YOLO(input_shape, self.args)
+        self._net = yolo.YOLO(input_shape, anchors, self.args.network)
         # else:
         #     raise Exception(f"Couldn't identify network {self.args.network.name}")
 
@@ -159,8 +160,9 @@ class trainercore(object):
             self.score_cut = torch.tensor(0.5, device=self.default_device())
 
             n_trainable_parameters = 0
-            for var in self._net.parameters():
-                n_trainable_parameters += numpy.prod(var.shape)
+            for var in self._net.named_parameters():
+                n_trainable_parameters += numpy.prod(var[1].shape)
+                # logger.info(f"  var: {var[0]} with shape {var[1].shape} and {numpy.prod(var[1].shape)} parameters.")
             logger.info("Total number of trainable parameters in this network: {}".format(n_trainable_parameters))
 
             self.init_optimizer()
