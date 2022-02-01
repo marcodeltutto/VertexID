@@ -667,17 +667,10 @@ class trainercore(object):
             x_targ = target[mask_targ][:,0]
             y_targ = target[mask_targ][:,1]
 
-<<<<<<< HEAD
             # if self._global_step % 25 == 0:
             #     if not self.args.run.distributed or self._rank == 0:
             #         numpy.save('xypred', numpy.array([x_pred.detach().cpu().float(), y_pred.detach().cpu().float()]))
             #         numpy.save('xytarg', numpy.array([x_targ.detach().cpu().float(), y_targ.detach().cpu().float()]))
-=======
-            if self._global_step % 25 == 0:
-                if not self.args.run.distributed or self._rank == 0:
-                    numpy.save('xypred', numpy.array([x_pred.detach().cpu().numpy(), y_pred.detach().cpu().numpy()]))
-                    numpy.save('xytarg', numpy.array([x_targ.detach().cpu().numpy(), y_targ.detach().cpu().numpy()]))
->>>>>>> master
 
             grid_size_w = prediction.size(1)
             grid_size_h = prediction.size(2)
