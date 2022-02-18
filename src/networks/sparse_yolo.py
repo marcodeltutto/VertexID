@@ -2,175 +2,160 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+import sparseconvnet as scn
 
+class SparseBlock(nn.Module):
 
-
-class Block(nn.Module):
-    '''
-    A convolutional block
-    '''
-
-    def __init__(self, infilters, outfilters, kernel, stride, padding, batch_norm, activation):
+    def __init__(self, infilters, outfilters, kernel, batch_norm, activation, nplanes=1):
 
         nn.Module.__init__(self)
 
         self.batch_norm = batch_norm
+        self.leaky_relu = activation == "leaky"
 
-        if not batch_norm: bias = True
-        else: bias = False
+        self.conv1 = scn.SubmanifoldConvolution(dimension=3,
+            nIn         = infilters,
+            nOut        = outfilters,
+            filter_size = [nplanes,kernel,kernel],
+            bias        = False)
 
-        if padding:
-            pad = (kernel - 1) // 2
+        if self.batch_norm:
+            if self.leaky_relu: self.bn1 = scn.BatchNormLeakyReLU(outfilters)
+            else:               self.bn1 = scn.BatchNormReLU(outfilters)
         else:
-            pad = 0
-
-        self.conv1 = torch.nn.Conv2d(
-            in_channels  = infilters,
-            out_channels = outfilters,
-            kernel_size  = kernel,
-            stride       = stride,
-            padding      = padding,
-            bias         = bias)
-
-        if batch_norm:
-            self.bn1  = torch.nn.BatchNorm2d(outfilters)
-
-        if activation == 'leaky':
-            self.activ = torch.nn.LeakyReLU()
-        else:
-            self.activ = torch.nn.ReLU()
+            if self.leaky_relu: self.relu = scn.LeakyReLU()
+            else:               self.relu = scn.ReLU()
 
     def forward(self, x):
 
-        # print('Block x is ', x)
         out = self.conv1(x)
-
         if self.batch_norm:
             out = self.bn1(out)
-        out = self.activ(out)
+        else:
+            out = self.relu(out)
 
         return out
 
 
-class ResidualBlock(nn.Module):
-    '''
-    A residual block, with two convolutions
-    '''
 
-    def __init__(self, infilters, outfilters1, outfilters2, padding=1, batch_norm=False, activation='leaky'):
+class SparseResidualBlock(nn.Module):
+
+
+    def __init__(self, infilters, outfilters1, outfilters2, kernel, batch_norm, activation, nplanes=1):
+    # def __init__(self, infilters, outfilters, batch_norm, leaky_relu, nplanes=1):
         nn.Module.__init__(self)
 
         self.batch_norm = batch_norm
+        self.leaky_relu = activation == "leaky"
+
+        self.conv1 = scn.SubmanifoldConvolution(dimension=3,
+            nIn         = infilters,
+            nOut        = outfilters1,
+            filter_size = [nplanes,1,1],
+            bias=False)
 
 
-        conv1_kernel = 1
-        if padding:
-            pad = (conv1_kernel - 1) // 2
-        else:
-            pad = 0
+        if self.batch_norm:
+            if self.leaky_relu: self.bn1 = scn.BatchNormLeakyReLU(outfilters1)
+            else:                self.bn1 = scn.BatchNormReLU(outfilters1)
 
-        self.conv1 = torch.nn.Conv2d(
-            in_channels  = infilters,
-            out_channels = outfilters1,
-            kernel_size  = conv1_kernel,
-            stride       = 1,
-            padding      = pad,
-            bias         = False)
+        self.conv2 = scn.SubmanifoldConvolution(dimension=3,
+            nIn         = outfilters1,
+            nOut        = outfilters2,
+            filter_size = [nplanes,kernel,kernel],
+            bias        = False)
 
-        if batch_norm:
-            self.bn1  = torch.nn.BatchNorm2d(outfilters1)
+        if self.batch_norm:
+            self.bn2 = scn.BatchNormalization(outfilters2)
 
+        self.residual = scn.Identity()
 
-        conv2_kernel = 3
-        if padding:
-            pad = (conv2_kernel - 1) // 2
-        else:
-            pad = 0
+        if self.leaky_relu: self.relu = scn.LeakyReLU()
+        else:               self.relu = scn.ReLU()
 
-        self.conv2 = torch.nn.Conv2d(
-            in_channels  = outfilters1,
-            out_channels = outfilters2,
-            kernel_size  = conv2_kernel,
-            stride       = 1,
-            padding      = pad,
-            bias         = False)
-
-        if batch_norm:
-            self.bn2  = torch.nn.BatchNorm2d(outfilters2)
-
-        if activation == 'leaky':
-            self.activ = torch.nn.LeakyReLU()
-        else:
-            self.activ = torch.nn.ReLU()
+        self.add = scn.AddTable()
 
     def forward(self, x):
 
-        residual = x
+        residual = self.residual(x)
 
         out = self.conv1(x)
 
         if self.batch_norm:
             out = self.bn1(out)
+        else:
+            out = self.relu(out)
 
         out = self.conv2(out)
+
         if self.batch_norm:
             out = self.bn2(out)
 
-        # out = self.activ(out + residual)
-        out = self.activ(out) + self.activ(residual)
+        # The addition of sparse tensors is not straightforward, since
+
+        out = self.add([out, residual])
+
+        out = self.relu(out)
+
         return out
 
 
-class ResidualBlockSeries(torch.nn.Module):
-    '''
-    A series of residual blocks
-    '''
 
-    def __init__(self, n_blocks, infilters, outfilters1, outfilters2, padding=1, batch_norm=False, activation='leaky'):
+
+
+class SparseConvolutionDownsample(nn.Module):
+
+    def __init__(self, infilters, outfilters, kernel, stride, batch_norm, activation, nplanes=1):
+        nn.Module.__init__(self)
+
+        self.batch_norm = batch_norm
+        self.leaky_relu = activation == "leaky"
+
+        self.conv = scn.Convolution(dimension=3,
+            nIn             = infilters,
+            nOut            = outfilters,
+            filter_size     = [nplanes,kernel,kernel],
+            filter_stride   = [1,stride,stride],
+            bias            = False
+        )
+
+        if self.batch_norm:
+            self.bn   = scn.BatchNormalization(outfilters)
+
+        if self.leaky_relu: self.relu = scn.LeakyReLU()
+        else:               self.relu = scn.ReLU()
+
+    def forward(self, x):
+        out = self.conv(x)
+        if self.batch_norm:
+            out = self.bn(out)
+
+        out = self.relu(out)
+        return out
+
+
+class SparseBlockSeries(torch.nn.Module):
+
+    def __init__(self, infilters, outfilters1, outfilters2, n_blocks, kernel, batch_norm, activation, nplanes=1, residual=True):
+
         torch.nn.Module.__init__(self)
 
-        self.blocks = torch.nn.ModuleList()
-        for i in range(n_blocks):
-            self.blocks.append(
-                ResidualBlock(
-                    infilters,
-                    outfilters1,
-                    outfilters2,
-                    padding,
-                    batch_norm,
-                    activation
-                )
-            )
+
+
+
+        if residual:
+            self.blocks = [ SparseResidualBlock(infilters, outfilters1, outfilters2, kernel, batch_norm, activation, nplanes=nplanes) for i in range(n_blocks) ]
+        else:
+            self.blocks = [ SparseBlock(infilters, outfilters1 , kernel, batch_norm, activation, nplanes=nplanes) for i in range(n_blocks)]
+
+        for i, block in enumerate(self.blocks):
+            self.add_module('block_{}'.format(i), block)
 
 
     def forward(self, x):
         for i in range(len(self.blocks)):
             x = self.blocks[i](x)
         return x
-
-
-class RouteBlock(nn.Module):
-    '''
-    A route block, currenty not used
-    '''
-
-    def __init__(self, start, end=None):
-
-        nn.Module.__init__(self)
-
-        self._start = start
-        self._end = end
-
-    def forward(self, x, outputs):
-
-        if end is None:
-            out = outputs[i + start]
-        else:
-            map1 = outputs[i + start]
-            map2 = outputs[i + end]
-            out = torch.cat((map1, map2), 1)
-
-        return out
 
 
 
@@ -199,8 +184,8 @@ class YOLOBlock(nn.Module):
         '''
 
         prediction = prediction.permute(0,2,3,1)
-        prediction[:,:,:,0:2] = torch.sigmoid(prediction[:,:,:,0:2])
-
+        x  = torch.sigmoid(prediction[:,:,:,0:2])
+        prediction = torch.cat([x, prediction[:,:,:,2:]], dim=-1)
         return prediction
 
 
@@ -297,26 +282,30 @@ class YOLO(nn.Module):
         # self.nplanes    = args.nplanes
         # self.label_mode = args.label_mode
 
-
         self.input_shape = input_shape
         # self.anchors = args.yolo_anchors
         self.anchors = anchors
         self.num_classes = args.yolo_num_classes
 
+        self.input_tensor = scn.InputLayer(dimension=3, spatial_size=[3,*input_shape[1:]])
+
+        self._x_yolo = None
+
+        # if args.compute_mode == "CPU": self._cuda = False
+        # else: self._cuda = True
 
         prev_filters = 1 #3
-        n_filters = args.n_initial_filters
+        n_filters = 32
 
         #
         # First convolutional block
         #
-        self.initial_convolution = Block(infilters=prev_filters,
-                                         outfilters=n_filters,
-                                         kernel=3,
-                                         stride=1,
-                                         padding=1,
-                                         batch_norm=args.batch_norm,
-                                         activation='leaky')
+        self.initial_convolution = SparseBlock(
+            infilters  = prev_filters,
+            outfilters = n_filters,
+            kernel     = args.kernel_size,
+            batch_norm = args.batch_norm,
+            activation = 'leaky')
         prev_filters = n_filters
         n_filters = filter_increase(n_filters)
 
@@ -330,8 +319,7 @@ class YOLO(nn.Module):
         # This is the number of downsampling/res blocks
         # that we have in the network, 5 in the case of
         # original yolo
-        # self.n_core_blocks = args.n_core_blocks
-
+        self.n_core_blocks = 5
 
         #
         # Downsampling and residual blocks
@@ -339,32 +327,30 @@ class YOLO(nn.Module):
         self.downsample = torch.nn.ModuleList()
         self.residual   = torch.nn.ModuleList()
 
-        # for i in range(0, self.n_core_blocks): # seems like this should loop over self.blocks_multiplicity
         for i in range(len(self.blocks_multiplicity)):
 
             # Downlsampling block
-            self.downsample.append(
-                Block(
-                    infilters  = prev_filters,
-                    outfilters = n_filters,
-                    kernel     = args.kernel_size,
-                    stride     = 2,
-                    padding    = 1,
-                    batch_norm = args.batch_norm,
-                    activation = 'leaky'
-                )
-            )
+            self.downsample.append(SparseConvolutionDownsample(
+                                        infilters=prev_filters,
+                                        outfilters=n_filters,
+                                        kernel=2,
+                                        stride=2,
+                                        batch_norm=args.batch_norm,
+                                        activation='leaky'))
 
             # Residual block series
             self.residual.append(
-                ResidualBlockSeries(
-                    # n           = i, # This argument didn't do anything ...
-                    n_blocks    = self.blocks_multiplicity[i],
+                SparseBlockSeries(
                     infilters   = n_filters,
                     outfilters1 = prev_filters,
-                    outfilters2 = n_filters))
+                    outfilters2 = n_filters,
+                    n_blocks    = self.blocks_multiplicity[i],
+                    kernel      = args.kernel_size,
+                    batch_norm  = args.batch_norm,
+                    activation  = "leaky",
+                    residual    = True))
 
-            # self.add_module("resblock_{}".format(i), self.residual[-1])
+
 
             prev_filters = n_filters
             n_filters = filter_increase(n_filters)
@@ -381,29 +367,28 @@ class YOLO(nn.Module):
         # activation = ['leaky', 'leaky', 'leaky', 'leaky', 'leaky', 'leaky', 'linear']
 
         # Just one last bottleneck layer
-        batch_normalize = [args.batch_norm] * 1
+        batch_normalize = [True] * 1
         pad = [1] * 1
         stride = [1] * 1
         filter_sizes = [5]
         kernel_size = [3]
         activation = ['leaky']
 
-        self.convolution_blocks_1 = torch.nn.ModuleList()
+        self.convolution_blocks_1 = []
 
         for i in range(0, len(filter_sizes)):
 
-            self.convolution_blocks_1.append(Block(infilters=prev_filters,
+            self.convolution_blocks_1.append(SparseBlock(infilters=prev_filters,
                                                    outfilters=filter_sizes[i],
                                                    kernel=kernel_size[i],
-                                                   stride=stride[i],
-                                                   padding=pad[i],
                                                    batch_norm=batch_normalize[i],
                                                    activation=activation[i]))
 
             prev_filters = filter_sizes[i]
 
-            # self.add_module("convolution_block_1_{}".format(i), self.convolution_blocks_1[-1])
+            self.add_module("convolution_block_1_{}".format(i), self.convolution_blocks_1[-1])
 
+        self.sparse_to_dense = scn.SparseToDense(dimension=3, nPlanes=filter_sizes[i])
 
         self.yololayer_1 = YOLOBlock(inp_dim_w=self.input_shape[1],
                                      inp_dim_h=self.input_shape[2],
@@ -413,30 +398,35 @@ class YOLO(nn.Module):
                                      )
         # self.add_module("yololayer_1", self.yololayer_1)
 
-    def forward(self, x):
 
-        batch_size = x.shape[0]
+
+    def forward(self, x):
+        # print(x)
+        batch_size = x[-1]
 
         # Reshape this tensor into the right shape to apply this multiplane network.
         self.nplanes = 3
-        x = torch.chunk(x, chunks=self.nplanes, dim=1)
-
-        # print('initial', x[0].size())
-        x = tuple(self.initial_convolution(_x) for _x in x)
-        # print('after initial_convolution', x[0].size())
+        # print(x[0].shape)
+        x = self.input_tensor(x)
+        # print('initial', x.spatial_size)
+        x = self.initial_convolution(x)
+        # print('after initial_convolution', x.spatial_size, x.features.shape)
 
         for i in range(len(self.blocks_multiplicity)):
-            x = tuple(self.downsample[i](_x) for _x in x)
-            # print(i, 'after downsample', x[0].size())
-            x = tuple(self.residual[i](_x) for _x in x)
-            # print(i, 'after residual', x[0].size())
+            x = self.downsample[i](x)
+            # print(i, 'after downsample', x.spatial_size, x.features.shape)
+            x = self.residual[i](x)
+            # print(i, 'after residual', x.spatial_size, x.features.shape)
 
         for i in range(0, len(self.convolution_blocks_1)):
-            x = tuple(self.convolution_blocks_1[i](_x) for _x in x)
-            # print(i, 'after convolution_blocks_1', x[0].size())
-
-
+            x = self.convolution_blocks_1[i](x)
+            # print(i, 'after convolution_blocks_1', x.spatial_size, x.features.shape)
+        x = self.sparse_to_dense(x)
+        # print(x.shape)
+        x = torch.chunk(x, chunks=self.nplanes, dim=2)
+        x = tuple(torch.squeeze(_x, dim=2) for _x in x)
+        # This is shaped
+        # print(x[0].shape)
         x = tuple(self.yololayer_1(_x) for _x in x)
-        # print('after yolo_1', x[0].size())
-
+        # print('after yolo_1', x[0].shape)
         return x

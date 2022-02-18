@@ -8,17 +8,15 @@ This repository contains tools for IO, distributed training, saving and restorin
 
 ### How to run
 
-`python bin/exec.py [train, iotest, inference] -f [input file] yolo`
+```bash
+python bin/exec.py mode=train run.id="test" \
+	data.data_directory="/path/to/data/directory/" \
+	data.file="train_file_name" \
+	data.aux_file="test_file_name"
+```
 
-For help on additional commands, run
+For a list of all options, run
 
-`python bin/exec.py --help`
-
-or, for commands specifc to a particular stage, run
-
-`python bin/exec.py [train, iotest, inference] --help`
-
-For network options, run
-
-`python bin/exec.py train yolo --help`
-
+```bash
+python bin/exec.py --help
+```
