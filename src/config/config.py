@@ -71,6 +71,6 @@ class Config:
     data:       Any       = MISSING
     network:    Yolo      = MISSING
     output_dir: str       = "output/${framework.name}/${network.name}/${run.id}/"
-
+    name:       str       = "none"
 
 cs.store(name="base_config", node=Config)

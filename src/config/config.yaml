@@ -4,3 +4,4 @@ defaults:
   - _self_
 
 output_dir: output/${network.name}//${run.id}/
+name: "SBND"
