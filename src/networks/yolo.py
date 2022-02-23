@@ -179,14 +179,12 @@ class YOLOBlock(nn.Module):
     A YOLO block
     '''
 
-    # def __init__(self, inp_dim_w, inp_dim_h, anchors, num_classes, cuda):
-    def __init__(self, inp_dim_w, inp_dim_h, anchors, num_classes):
+    def __init__(self, inp_dim_w, inp_dim_h, num_classes):
 
         nn.Module.__init__(self)
 
         self._inp_dim_w = inp_dim_w
         self._inp_dim_h = inp_dim_h
-        self._anchors = anchors
         self._num_classes = num_classes
         # self._cuda = cuda
 
@@ -225,7 +223,7 @@ def filter_increase(n_filters):
 
 class YOLO(nn.Module):
 
-    def __init__(self, input_shape, anchors, args):
+    def __init__(self, input_shape, args):
         torch.nn.Module.__init__(self)
         # All of the parameters are controlled via the args module
 
@@ -234,8 +232,6 @@ class YOLO(nn.Module):
 
 
         self.input_shape = input_shape
-        # self.anchors = args.yolo_anchors
-        self.anchors = anchors
         self.num_classes = args.yolo_num_classes
 
 
@@ -342,7 +338,6 @@ class YOLO(nn.Module):
 
         self.yololayer_1 = YOLOBlock(inp_dim_w=self.input_shape[1],
                                      inp_dim_h=self.input_shape[2],
-                                     anchors=self.anchors,
                                      num_classes=self.num_classes,
                                      # cuda=self._cuda
                                      )

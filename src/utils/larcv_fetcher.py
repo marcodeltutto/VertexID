@@ -16,7 +16,7 @@ from src.config import ImageModeKind
 
 class larcv_fetcher(object):
 
-    def __init__(self, mode, distributed, access_mode, dimension, data_format, downsample_images, seed=None):
+    def __init__(self, config, mode, distributed, access_mode, dimension, data_format, downsample_images, seed=None):
 
         if mode not in ['train', 'inference', 'iotest']:
             raise Exception("Larcv Fetcher can't handle mode ", mode)
@@ -33,6 +33,7 @@ class larcv_fetcher(object):
             self._larcv_interface = queueloader.queue_interface(
                 random_access_mode=access_mode, seed=seed)
 
+        self.config            = config
         self.mode              = mode
         self.image_mode        = data_format
         self.input_dimension   = dimension
@@ -49,7 +50,7 @@ class larcv_fetcher(object):
 
 
 
-    def prepare_sample(self, name, input_file, batch_size, color=None, start_index = 0, print_config=False):
+    def prepare_sample(self, name, input_file, batch_size, color=None, start_index = 0, print_config=True):
 
         # If quotations are in the file name, remove them
         if "\"" in input_file:
@@ -78,14 +79,24 @@ class larcv_fetcher(object):
         data_keys = {}
         data_keys['image'] = name+'data'
 
+        # Need to embed the data in SBND:
+        if self.config.name == "SBND" and self.input_dimension == 2:
+            cb.add_preprocess(
+                datatype        = "sparse2d",
+                producer        = "sbndwire",
+                process         = "Embed",
+                OutputProducer  = "sbndwire",
+                TargetSize      = [2048,1280]
+            )
+
         # Downsampling
         if self.downsample_images != 0:
             cb.add_preprocess(
                 datatype = "sparse2d",
                 Product = "sparse2d",
-                producer = "dunevoxels",
+                producer = "sbndwire" if self.config.name == 'SBND' else "dunevoxels",
                 process  = "Downsample",
-                OutputProducer = "dunevoxels",
+                OutputProducer = "sbndwire" if self.config.name == 'SBND' else "dunevoxels",
                 Downsample = 2**self.downsample_images,
                 PoolType = 1 # average,
                 # PoolType = 2 # max
@@ -95,12 +106,12 @@ class larcv_fetcher(object):
         # Need to load up on data fillers.
         if self.input_dimension == 2:
             cb.add_batch_filler(
-                datatype  = "sparse2d",
-                producer  = "dunevoxels",
-                name      = name+"data",
+                datatype   = "sparse2d",
+                producer   = "sbndwire" if self.config.name == 'SBND' else "dunevoxels",
+                name       = name+"data",
                 MaxVoxels = 20000,
-                Augment   = False,
-                Channels  = [0, 1, 2],
+                Augment    = False,
+                Channels   = [0, 1, 2],
                 )
 
         else:
@@ -113,30 +124,39 @@ class larcv_fetcher(object):
                 )
 
         # Add something to convert the neutrino particles into bboxes:
-        cb.add_preprocess(
-            datatype = "particle",
-            producer = "neutrino",
-            process  = "BBoxFromParticle",
-            OutputProducer = "neutrino"
-        )
-        cb.add_batch_filler(
-            datatype  = "bbox3d",
-            producer  = "neutrino",
-            name      = name+"bbox",
-            MaxBoxes  = 2,
-            Channels  = [0,]
+        if self.config.name == 'DUNE':
+            cb.add_preprocess(
+                datatype = "particle",
+                producer = "neutrino",
+                process  = "BBoxFromParticle",
+                OutputProducer = "neutrino"
             )
+            cb.add_batch_filler(
+                datatype  = "bbox3d",
+                producer  = "neutrino",
+                name      = name+"bbox",
+                MaxBoxes  = 2,
+                Channels  = [0,]
+                )
+        else:
+            cb.add_batch_filler(
+                datatype  = "bbox2d",
+                producer  = "bbox_neutrino",
+                name      = name+"bbox",
+                MaxBoxes  = 1,
+                Channels  = [0,1,2]
+                )
 
 
         # Add the label configs:
-        for label_name, l in zip(['neut', 'prot', 'cpi', 'npi'], [3, 3, 2, 2]):
-            cb.add_batch_filler(
-                datatype     = "PID",
-                producer     = f"{label_name}ID",
-                name         = name+f'label_{label_name}',
-                PdgClassList = [i for i in range(l)]
-            )
-            data_keys[f'label_{label_name}'] = name+f'label_{label_name}'
+        # for label_name, l in zip(['neut', 'prot', 'cpi', 'npi'], [3, 3, 2, 2]):
+        #     cb.add_batch_filler(
+        #         datatype     = "PID",
+        #         producer     = f"{label_name}ID",
+        #         name         = name+f'label_{label_name}',
+        #         PdgClassList = [i for i in range(l)]
+        #     )
+        #     data_keys[f'label_{label_name}'] = name+f'label_{label_name}'
 
 
         if print_config:
@@ -238,8 +258,24 @@ class larcv_fetcher(object):
 
 
         # Parse out the vertex info:
-        minibatch_data['vertex'] = minibatch_data['vertex'][:,:,0,0:3]
-        minibatch_data['vertex'] = minibatch_data['vertex'].reshape((-1, 3))
+        if self.config.name == 'DUNE':
+            minibatch_data['vertex'] = minibatch_data['vertex'][:,:,0,0:3]
+            minibatch_data['vertex'] = minibatch_data['vertex'].reshape((-1, 3))
+
+        else:
+            minibatch_data['vertex'] = minibatch_data['vertex'][:,:,0,0:2]
+
+            # These should be retrieved by the image meta TODO
+            width = 614.40
+            height = 399.51
+            min_x = [-9.6, -9.6, -57.59]
+            min_y = [1.87, 1.87, 1.87]
+
+            for p in [0, 1, 2]:
+                minibatch_data['vertex'][:,p,0] = self.config.data.image_width * (minibatch_data['vertex'][:,p,0] - min_x[p]) / width
+                minibatch_data['vertex'][:,p,1] = self.config.data.image_height * (minibatch_data['vertex'][:,p,1] - min_y[p]) / height
+
+        # print('minibatch_data[vertex]:', minibatch_data['vertex'])
 
         # Also, we map the vertex from 0 to 1 across the image.  The image size is
         # [360, 200, 500] and the origin is at [0, -100, 0]
@@ -253,8 +289,8 @@ class larcv_fetcher(object):
             if self.input_dimension == 3:
                 minibatch_data['image'] = data_transforms.larcvsparse_to_dense_3d(minibatch_data['image'])
             else:
-                x_dim = int(1536/2**self.downsample_images)
-                y_dim = int(1024/2**self.downsample_images)
+                x_dim = int(self.config.data.image_width / 2**self.downsample_images)
+                y_dim = int(self.config.data.image_height / 2**self.downsample_images)
                 minibatch_data['image'] = data_transforms.larcvsparse_to_dense_2d(minibatch_data['image'], dense_shape=[x_dim, y_dim])
         elif self.image_mode == ImageModeKind.sparse:
             # Have to convert the input image from dense to sparse format:

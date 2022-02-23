@@ -1,0 +1,18 @@
+
+defaults:
+  - base_config
+  - override data: DUNE
+  - _self_
+
+output_dir: output/${network.name}//${run.id}/
+name: "DUNE"
+#
+# data:
+#   data_directory: "/lus/grand/projects/neutrino_osc_ADSP/datasets/DUNE/pixsim_full/"
+#   file:           "merged_sample_chunk8_99.h5"
+#   aux_file:       "merged_sample_chunk8_98.h5"
+#   image_width:    1536
+#   image_height:   1024
+#   pitch:          0.4
+#   padding_x:      286
+#   padding_y:      124

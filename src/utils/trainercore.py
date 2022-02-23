@@ -50,6 +50,7 @@ class trainercore(object):
         logger.info(f"Access mode: {access_mode}")
 
         self.larcv_fetcher = larcv_fetcher.larcv_fetcher(
+            config            = self.args,
             mode              = self.mode,
             distributed       = self.args.run.distributed,
             access_mode       = access_mode,
@@ -137,13 +138,12 @@ class trainercore(object):
         # To initialize the network, we see what the name is
         # and act on that:
         # if self.args.network == "yolo":
-        anchors = [(116, 90), (156, 198), (373, 326)]
         if self.args.data.image_mode == ImageModeKind.dense:
             from src.networks import yolo
-            self._net = yolo.YOLO(input_shape, anchors, self.args.network)
+            self._net = yolo.YOLO(input_shape, self.args.network)
         elif self.args.data.image_mode == ImageModeKind.sparse:
             from src.networks import sparse_yolo
-            self._net = sparse_yolo.YOLO(input_shape, anchors, self.args.network)
+            self._net = sparse_yolo.YOLO(input_shape, self.args.network)
         # else:
         #     raise Exception(f"Couldn't identify network {self.args.network.name}")
 
@@ -427,6 +427,14 @@ class trainercore(object):
 
 
     def _target_to_yolo(self, target, logits):
+
+        if self.args.name == 'SBND':
+            return self._target_to_yolo_sbnd(target, logits)
+        else:
+            return self._target_to_yolo_dune(target, logits)
+
+
+    def _target_to_yolo_dune(self, target, logits):
         '''
         Takes the vertex data from larcv and transforms it
         to YOLO output.
@@ -447,9 +455,9 @@ class trainercore(object):
             target_out = []
             mask = []
 
-            pitch = 0.4 * 2**self.args.data.downsample
-            padding_x = 286 / 2**self.args.data.downsample
-            padding_y = 124 / 2**self.args.data.downsample
+            pitch = self.args.data.pitch * 2**self.args.data.downsample
+            padding_x = self.args.data.padding_x / 2**self.args.data.downsample
+            padding_y = self.args.data.padding_y / 2**self.args.data.downsample
 
             batch_size = target.size(0)
 
@@ -503,6 +511,76 @@ class trainercore(object):
                 # if self._global_step % 25 == 0:
                 #     if not self.args.run.distributed or self._rank == 0:
                 #         numpy.save(f'yolo_tgt_{plane}', target_out_p.cpu())
+
+                target_out.append(target_out_p)
+                mask.append(mask_p)
+
+        return target_out, mask
+
+
+    def _target_to_yolo_sbnd(self, target, logits):
+        '''
+        Takes the vertex data from larcv and transforms it
+        to YOLO output.
+
+        arguments:
+        - target: the data from larcv
+        - n_channels: the number of channels used during training
+        - grid_size_w: the image width at the end of the network
+        - grid_size_h: the image height at the end of the network
+
+        returns:
+        - the transformed target
+        - a mask that can mask the entries where there are real objects
+        '''
+        # print('True vertex position:', target)
+
+        with self.default_device_context():
+            target_out = []
+            mask = []
+
+            batch_size = target.size(0)
+
+            for plane in range(len(logits)):
+
+                logits_p = logits[plane]
+
+                n_channels = logits_p.size(3)
+                grid_size_w = logits_p.size(1)
+                grid_size_h = logits_p.size(2)
+
+                target_out_p = torch.zeros(batch_size, grid_size_w, grid_size_h, n_channels, device=self.default_device())
+                mask_p = torch.zeros(batch_size, grid_size_w, grid_size_h, dtype=torch.bool, device=self.default_device())
+
+                step_w = self.args.data.image_width / grid_size_w
+                step_h = self.args.data.image_height / grid_size_h
+
+                for batch_id in range(batch_size):
+
+                    projected_x = target[batch_id, plane, 0]
+                    projected_y = target[batch_id, plane, 1]
+
+                    t_x = projected_x / step_w
+                    t_i = int(t_x)
+                    t_y = projected_y / step_h
+                    t_j = int(t_y)
+
+                    if t_j > 39: t_j = 39
+                    if t_j < 0: t_j = 0
+
+                    target_out_p[batch_id, t_i, t_j, 0] = t_x - t_i
+                    target_out_p[batch_id, t_i, t_j, 1] = t_y - t_j
+                    target_out_p[batch_id, t_i, t_j, 2] = 1.
+                    target_out_p[batch_id, t_i, t_j, 3] = 1.
+
+                    mask_p[batch_id, t_i, t_j] = 1
+
+                    # print('Batch', batch_id, 't_i', t_i, 't_j', t_j)
+
+                # print('target_out_p', target_out_p)
+                if self._global_step == 0:
+                    if not self.args.run.distributed or self._rank == 0:
+                        numpy.save(f'yolo_tgt_{plane}', target_out_p.cpu())
 
                 target_out.append(target_out_p)
                 mask.append(mask_p)
@@ -667,16 +745,16 @@ class trainercore(object):
             x_targ = target[mask_targ][:,0]
             y_targ = target[mask_targ][:,1]
 
-            # if self._global_step % 25 == 0:
-            #     if not self.args.run.distributed or self._rank == 0:
-            #         numpy.save('xypred', numpy.array([x_pred.detach().cpu().float(), y_pred.detach().cpu().float()]))
-            #         numpy.save('xytarg', numpy.array([x_targ.detach().cpu().float(), y_targ.detach().cpu().float()]))
+            if self._global_step == 0:
+                if not self.args.run.distributed or self._rank == 0:
+                    numpy.save('xypred', numpy.array([x_pred.detach().cpu().float(), y_pred.detach().cpu().float()]))
+                    numpy.save('xytarg', numpy.array([x_targ.detach().cpu().float(), y_targ.detach().cpu().float()]))
 
             grid_size_w = prediction.size(1)
             grid_size_h = prediction.size(2)
-            pitch = 0.4 # cm
-            a = 1536 / grid_size_w * pitch
-            b = 1024 / grid_size_h * pitch
+            # pitch = 0.4 # cm
+            a = self.args.data.image_width / grid_size_w * self.args.data.pitch
+            b = self.args.data.image_height / grid_size_h * self.args.data.pitch
             resolution = 0
 
             with torch.no_grad():
@@ -873,9 +951,9 @@ class trainercore(object):
         minibatch_data = self.larcv_fetcher.fetch_next_batch("primary", force_pop=True)
         io_end_time = datetime.datetime.now()
 
-        # if self._global_step % 25 == 0 and self._rank == 0:
-        #     numpy.save("img",minibatch_data['image'])
-        #     numpy.save("vtx",minibatch_data['vertex'])
+        if self._global_step == 0 and self._rank == 0:
+            numpy.save("img",minibatch_data['image'])
+            numpy.save("vtx",minibatch_data['vertex'])
 
         minibatch_data = self.to_torch(minibatch_data)
 
