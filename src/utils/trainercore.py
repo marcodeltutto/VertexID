@@ -138,13 +138,12 @@ class trainercore(object):
         # To initialize the network, we see what the name is
         # and act on that:
         # if self.args.network == "yolo":
-        anchors = [(116, 90), (156, 198), (373, 326)]
         if self.args.data.image_mode == ImageModeKind.dense:
             from src.networks import yolo
-            self._net = yolo.YOLO(input_shape, anchors, self.args.network)
+            self._net = yolo.YOLO(input_shape, self.args.network)
         elif self.args.data.image_mode == ImageModeKind.sparse:
             from src.networks import sparse_yolo
-            self._net = sparse_yolo.YOLO(input_shape, anchors, self.args.network)
+            self._net = sparse_yolo.YOLO(input_shape, self.args.network)
         # else:
         #     raise Exception(f"Couldn't identify network {self.args.network.name}")
 
@@ -565,6 +564,9 @@ class trainercore(object):
                     t_i = int(t_x)
                     t_y = projected_y / step_h
                     t_j = int(t_y)
+
+                    if t_j > 39: t_j = 39
+                    if t_j < 0: t_j = 0
 
                     target_out_p[batch_id, t_i, t_j, 0] = t_x - t_i
                     target_out_p[batch_id, t_i, t_j, 1] = t_y - t_j

@@ -79,6 +79,16 @@ class larcv_fetcher(object):
         data_keys = {}
         data_keys['image'] = name+'data'
 
+        # Need to embed the data in SBND:
+        if self.config.name == "SBND" and self.input_dimension == 2:
+            cb.add_preprocess(
+                datatype        = "sparse2d",
+                producer        = "sbndwire",
+                process         = "Embed",
+                OutputProducer  = "sbndwire",
+                TargetSize      = [2048,1280]
+            )
+
         # Downsampling
         if self.downsample_images != 0:
             cb.add_preprocess(
@@ -265,7 +275,7 @@ class larcv_fetcher(object):
                 minibatch_data['vertex'][:,p,0] = self.config.data.image_width * (minibatch_data['vertex'][:,p,0] - min_x[p]) / width
                 minibatch_data['vertex'][:,p,1] = self.config.data.image_height * (minibatch_data['vertex'][:,p,1] - min_y[p]) / height
 
-        print('minibatch_data[vertex]:', minibatch_data['vertex'])
+        # print('minibatch_data[vertex]:', minibatch_data['vertex'])
 
         # Also, we map the vertex from 0 to 1 across the image.  The image size is
         # [360, 200, 500] and the origin is at [0, -100, 0]

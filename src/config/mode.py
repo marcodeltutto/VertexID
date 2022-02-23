@@ -40,7 +40,7 @@ class Mode:
 
 @dataclass
 class Train(Mode):
-    checkpoint_iteration: int = 500
+    checkpoint_iteration: int = 25
     summary_iteration:    int = 1
     logging_iteration:    int = 1
     optimizer:      Optimizer = Optimizer()

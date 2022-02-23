@@ -54,7 +54,7 @@ cs.store(
 defaults = [
     {"run"       : "base_run"},
     {"mode"      : "train"},
-    {"data"      : "data"},
+    {"data"      : "SBND"},
     {"network"   : "yolo"}
 ]
 
